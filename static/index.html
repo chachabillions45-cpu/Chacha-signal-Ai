@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHACHA AI SIGNALS PRO</title>
+<style>
+body{background:#101827;color:white;font-family:Arial;margin:0;padding:18px}
+h1{color:#00e6a0;text-align:center;font-size:25px}
+.card{background:#1d293b;padding:18px;border-radius:14px;margin:15px 0}
+select,button{width:100%;padding:15px;margin-top:12px;border:0;border-radius:9px;font-size:16px}
+button{background:#00c98b;color:#07150f;font-weight:bold}
+.signal{text-align:center;font-size:30px;font-weight:bold;padding:20px}
+.small{color:#aab6c8;font-size:13px}
+</style>
+</head>
+<body>
+
+<h1>CHACHA AI SIGNALS PRO</h1>
+<p style="text-align:center">OTC MARKET SIGNAL GENERATOR</p>
+
+<div class="card">
+<h3>Select OTC Market</h3>
+<select id="pair">
+<option value="EURUSD_otc">EUR/USD OTC</option>
+<option value="GBPUSD_otc">GBP/USD OTC</option>
+<option value="USDJPY_otc">USD/JPY OTC</option>
+<option value="BTCUSD_otc">BTC/USD OTC</option>
+<option value="AUDUSD_otc">AUD/USD OTC</option>
+</select>
+
+<button onclick="analyze()">ANALYZE MARKET</button>
+<div id="status" class="small">Ready to analyze</div>
+</div>
+
+<div class="card">
+<h3>Trading Signal</h3>
+<div id="signal" class="signal">WAIT</div>
+<p id="details" style="text-align:center">Press Analyze Market</p>
+</div>
+
+<div class="card">
+<h3>Important Notice</h3>
+<p class="small">Signals are technical estimates, not guaranteed predictions. Confirm every signal on your trading platform. Trade responsibly.</p>
+</div>
+
+<script>
+async function analyze(){
+ const status=document.getElementById("status");
+ const signal=document.getElementById("signal");
+ const details=document.getElementById("details");
+ const pair=document.getElementById("pair").value;
+
+ status.innerText="Fetching market candles...";
+ signal.innerText="WAIT";
+ details.innerText="Analyzing...";
+
+ try{
+  const response=await fetch("/api/candles?symbol="+pair);
+  const data=await response.json();
+
+  if(!response.ok) throw new Error(data.error || "Unable to get candles");
+
+  let candles=data.candles || data.data || data.results || data;
+
+  if(!Array.isArray(candles) || candles.length<22){
+   throw new Error("Candle data format not recognized or insufficient.");
+  }
+
+  const closes=candles.map(c=>Number(c.close ?? c.c)).filter(Number.isFinite);
+
+  if(closes.length<22) throw new Error("Not enough valid closing prices.");
+
+  function ema(values,period){
+   let k=2/(period+1);
+   let result=values[0];
+   for(let i=1;i<values.length;i++){
+    result=values[i]*k+result*(1-k);
+   }
+   return result;
+  }
+
+  const fast=ema(closes.slice(-40),9);
+  const slow=ema(closes.slice(-60),21);
+
+  let gains=0,losses=0;
+  for(let i=closes.length-14;i<closes.length;i++){
+   let change=closes[i]-closes[i-1];
+   if(change>0) gains+=change;
+   else losses-=change;
+  }
+
+  let rs=losses===0?100:gains/losses;
+  let rsi=100-(100/(1+rs));
+
+  let result="WAIT";
+  if(fast>slow && rsi>50 && rsi<70) result="CALL";
+  if(fast<slow && rsi<50 && rsi>30) result="PUT";
+
+  signal.innerText=result;
+  details.innerText="RSI: "+rsi.toFixed(2)+" | EMA 9: "+fast.toFixed(5)+" | EMA 21: "+slow.toFixed(5);
+  status.innerText="Analysis completed";
+ }catch(error){
+  signal.innerText="WAIT";
+  details.innerText=error.message;
+  status.innerText="Analysis failed";
+ }
+}
+</script>
+</body>
+</html>
