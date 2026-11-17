@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CHACHA AI ENGINE 14</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:14px;background:#101827;color:#fff;font-family:Arial,sans-serif}
+h2{text-align:center;color:#38e8b5}.sub,.note,.small{color:#aab7c8;font-size:12px;line-height:1.5}
+.sub{text-align:center}.card{background:#1b293b;border:1px solid #30435b;border-radius:12px;padding:15px;margin:12px 0}
+label{display:block;color:#aab7c8;font-size:13px;margin:12px 0 6px}
+select,button{width:100%;padding:13px;border-radius:8px;border:1px solid #40546e;background:#101827;color:#fff;font-size:15px}
+button{background:#087f68;border:0;font-weight:bold;margin-top:10px}button:disabled{opacity:.4}
+.value{font-size:21px;font-weight:bold;color:#38e8b5;margin:8px 0}.row{display:flex;justify-content:space-between;gap:8px;padding:9px 0;border-bottom:1px solid #30435b;font-size:13px}
+.good{color:#38e8b5}.bad{color:#ff7272}.wait{color:#ffc65c}
+.log{max-height:180px;overflow:auto;background:#0b1220;border-radius:8px;padding:10px;font:11px/1.5 monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:#cbd5e1}
+</style>
+</head>
+<body>
+<h2>CHACHA AI ENGINE 14</h2>
+<p class="sub">TRANSITION + CONDITIONAL ANALYSIS • WALK-FORWARD TEST • PAPER ONLY</p>
+
+<div class="card">
+<h3>Live Market</h3>
+<label for="market">Volatility market</label>
+<select id="market"><option value="1HZ100V">Volatility 100 (1s)</option></select>
+<p id="status" class="wait">Connecting...</p>
+<div class="small">Live price</div><div class="value" id="price">--</div>
+<div class="small">Last digit: <b id="lastDigit">--</b> · New live ticks: <b id="tickCount">0</b></div>
+<div class="row"><span>WebSocket</span><b id="socket">Waiting</b></div>
+<div class="row"><span>Market discovery</span><b id="marketState">Waiting</b></div>
+<div class="row"><span>History</span><b id="historyState">Waiting</b></div>
+<div class="row"><span>Live stream</span><b id="stream">Waiting</b></div>
+<div class="row"><span>Stored digit history</span><b id="historyCount">0</b></div>
+<button id="reconnect">RECONNECT</button>
+</div>
+
+<div class="card">
+<h3>Analysis Settings</h3>
+<label for="lookback">Lookback window</label>
+<select id="lookback"><option>50</option><option selected>100</option><option>200</option><option>300</option></select>
+<label for="minimum">Minimum scored outcomes</label>
+<select id="minimum"><option>200</option><option selected>300</option><option>500</option></select>
+<button id="analyse">RUN WALK-FORWARD VALIDATION</button>
+</div>
+
+<div class="card">
+<h3>Model diagnostics</h3>
+<div class="row"><span>Most frequent digit</span><b id="freq">--</b></div>
+<div class="row"><span>Most common next digit after current</span><b id="transition">--</b></div>
+<div class="row"><span>Conditional sample size</span><b id="conditionN">0</b></div>
+<div class="row"><span>Two-digit context sample</span><b id="contextN">0</b></div>
+<p class="note" id="modelNote">Waiting for sufficient history.</p>
+</div>
+
+<div class="card">
+<h3>Out-of-sample strategy scores</h3>
+<p class="note">Each prediction is generated using only earlier digits. Historical scores are not promises of future accuracy.</p>
+<div class="row"><span>Matches — exact digit</span><b id="matchScore">--</b></div>
+<div class="row"><span>Differs — exclude one digit</span><b id="diffScore">--</b></div>
+<div class="row"><span>Even / Odd</span><b id="parityScore">--</b></div>
+<div class="row"><span>Over / Under 5</span><b id="barrierScore">--</b></div>
+<div class="value wait" id="decision">COLLECTING DATA</div>
+<p class="note" id="decisionNote">No strategy is approved until it passes the test rules.</p>
+</div>
+
+<div class="card">
+<h3>Paper test — 100 prediction tracker</h3>
+<label for="contract">Contract to paper-test</label>
+<select id="contract">
+<option value="match">Matches — exact digit</option><option value="differs">Differs — exclude digit</option>
+<option value="parity">Even / Odd</option><option value="barrier">Over / Under 5</option>
+</select>
+<div class="value wait" id="signal">NO SIGNAL</div>
+<p class="note" id="signalInfo">Waiting for validation.</p>
+<button id="arm" disabled>ARM ONE NEXT-TICK PAPER TEST</button>
+<p id="paperStatus" class="wait">Not armed.</p>
+<div class="row"><span>Completed predictions</span><b id="total">0 / 100</b></div>
+<div class="row"><span>Wins</span><b id="wins">0</b></div>
+<div class="row"><span>Losses</span><b id="losses">0</b></div>
+<div class="row"><span>Pushes (not counted)</span><b id="pushes">0</b></div>
+<div class="row"><span>Win rate</span><b id="rate">--</b></div>
+<button id="reset">RESET PAPER SCORE</button>
+</div>
+
+<div class="card"><h3>Diagnostic log</h3><div id="log" class="log">Starting...</div><button id="clear">CLEAR LOG</button></div>
+<div class="card"><p class="note"><b>Safety:</b> Paper testing only. No account authorization and no real trades. The 80/100 goal is not guaranteed. A high win percentage alone does not establish profitability because contract payouts differ.</p></div>
+
+<script>
+"use strict";
+const ENDPOINT = "wss://api.derivws.com/trading/v1/options/ws/public";
+const $ = id => document.getElementById(id);
+let ws = null, reqId = 0, symbol = "1HZ100V", decimals = 2;
+let digits = [], bufferedTicks = [], liveTicks = 0, historyReady = false;
+let scores = null, pending = null, wins = 0, losses = 0, pushes = 0;
+
+function log(message) {
+  $("log").textContent = (new Date().toLocaleTimeString() + " " + message + "\n" + $("log").textContent).slice(0,7000);
+}
+function setStatus(message, cls) {
+  $("status").textContent = message;
+  $("status").className = cls || "wait";
+}
+function send(payload) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) { log("Cannot send: socket not open"); return false; }
+  ws.send(JSON.stringify(payload));
+  log("SENT " + JSON.stringify(payload));
+  return true;
+}
+function lastDigit(quote) {
+  const n = Number(quote);
+  if (!Number.isFinite(n)) return null;
+  const text = n.toFixed(decimals);
+  return Number(text.charAt(text.length - 1));
+}
+function countDigits(arr) {
+  const counts = Array(10).fill(0);
+  arr.forEach(d => counts[d]++);
+  return counts;
+}
+function model(arr) {
+  const baseCounts = countDigits(arr);
+  const base = baseCounts.map(n => (n + 1) / (arr.length + 10));
+  const previous = arr[arr.length - 1];
+  const previous2 = arr.length > 1 ? arr[arr.length - 2] : null;
+  const transitionCounts = Array(10).fill(0);
+  const contextCounts = Array(10).fill(0);
+  let transitionN = 0, contextN = 0;
+  for (let i = 1; i < arr.length; i++) {
+    if (arr[i - 1] === previous) { transitionCounts[arr[i]]++; transitionN++; }
+  }
+  for (let i = 2; i < arr.length; i++) {
+    if (previous2 !== null && arr[i - 2] === previous2 && arr[i - 1] === previous) {
+      contextCounts[arr[i]]++; contextN++;
+    }
+  }
+  const trans = transitionCounts.map(n => (n + 0.5) / (transitionN + 5));
+  const context = contextCounts.map(n => (n + 0.5) / (contextN + 5));
+  const tw = transitionN >= 8 ? Math.min(0.35, transitionN / (transitionN + 35)) : 0;
+  const cw = contextN >= 8 ? Math.min(0.20, contextN / (contextN + 30)) : 0;
+  const bw = 1 - tw - cw;
+  const probs = base.map((p,i) => bw*p + tw*trans[i] + cw*context[i]);
+  return {probs,baseCounts,transitionN,contextN,trans};
+}
+function forecast(arr, kind) {
+  const m = model(arr), p = m.probs;
+  const order = Array.from({length:10},(_,i)=>i).sort((a,b)=>p[b]-p[a]);
+  if (kind === "match" || kind === "differs") return {choice:order[0], model:m};
+  if (kind === "parity") {
+    const even = p.reduce((s,v,i)=>s + (i%2===0 ? v : 0),0);
+    return {choice:even >= 0.5 ? "EVEN" : "ODD",model:m};
+  }
+  const over = p.reduce((s,v,i)=>s + (i>5 ? v : 0),0);
+  const under = p.reduce((s,v,i)=>s + (i<5 ? v : 0),0);
+  return {choice:over >= under ? "OVER" : "UNDER",model:m};
+}
+function outcome(kind, prediction, actual) {
+  if (kind === "match") return {count:true,win:actual === prediction.choice};
+  if (kind === "differs") return {count:true,win:actual !== prediction.choice};
+  if (kind === "parity") return {count:true,win:(actual%2===0) === (prediction.choice==="EVEN")};
+  if (actual === 5) return {count:false,win:false};
+  return {count:true,win:prediction.choice==="OVER" ? actual>5 : actual<5};
+}
+function baseline(kind) { return kind==="match" ? 0.10 : kind==="differs" ? 0.90 : 0.50; }
+function wilsonLower(w,n) {
+  if (!n) return 0;
+  const z=1.96, p=w/n, z2=z*z;
+  return (p+z2/(2*n)-z*Math.sqrt((p*(1-p)+z2/(4*n))/n))/(1+z2/n);
+}
+function walkForward(arr, lookback, minimum) {
+  const result = {};
+  ["match","differs","parity","barrier"].forEach(kind => {
+    let winsLocal=0, n=0;
+    const start=Math.max(lookback,Math.floor(arr.length*0.60));
+    for (let i=start;i<arr.length;i++) {
+      const history=arr.slice(Math.max(0,i-lookback),i);
+      const r=outcome(kind,forecast(history,kind),arr[i]);
+      if (r.count) { n++; if (r.win) winsLocal++; }
+    }
+    const rate=n ? winsLocal/n : 0, lower=wilsonLower(winsLocal,n);
+    result[kind]={w:winsLocal,n,rate,lower,pass:n>=minimum && lower>baseline(kind)};
+  });
+  return result;
+}
+function formatScore(s) {
+  if (!s || !s.n) return "Insufficient data";
+  return (100*s.rate).toFixed(1)+"% ("+s.w+"/"+s.n+") · lower "+(100*s.lower).toFixed(1)+"% · "+(s.pass?"PASS":"NO PASS");
+}
+function updateDiagnostics(arr) {
+  const m=model(arr), common=m.baseCounts.indexOf(Math.max(...m.baseCounts));
+  $("freq").textContent=common+" ("+m.baseCounts[common]+")";
+  $("transition").textContent=m.trans.indexOf(Math.max(...m.trans))+" ("+m.transitionN+" examples)";
+  $("conditionN").textContent=m.transitionN;
+  $("contextN").textContent=m.contextN;
+  $("modelNote").textContent="Smoothed overall frequencies blended with previous-digit and two-digit context estimates. Sparse contexts receive little or no weight.";
+}
+function updatePaper() {
+  $("total").textContent=(wins+losses)+" / 100";
+  $("wins").textContent=wins; $("losses").textContent=losses; $("pushes").textContent=pushes;
+  $("rate").textContent=wins+losses ? (100*wins/(wins+losses)).toFixed(1)+"%" : "--";
+  if (wins+losses>=100) { $("paperStatus").textContent="100 scored outcomes completed."; $("arm").disabled=true; }
+}
+function refreshSignal() {
+  const kind=$("contract").value, look=Number($("lookback").value);
+  if (!historyReady || !scores || !scores[kind] || !scores[kind].pass || digits.length<look) {
+    $("signal").textContent="NO SIGNAL"; $("signalInfo").textContent="No validated candidate. Paper test is disabled."; $("arm").disabled=true; return;
+  }
+  const p=forecast(digits.slice(-look),kind);
+  const label=kind==="match" ? "MATCH "+p.choice : kind==="differs" ? "DIFFER "+p.choice : kind==="parity" ? p.choice : p.choice+" 5";
+  $("signal").textContent=label; $("signalInfo").textContent="Walk-forward score: "+formatScore(scores[kind])+". Experimental only.";
+  $("arm").disabled=!!pending || wins+losses>=100;
+}
+function analyse() {
+  if (digits.length<Number($("lookback").value)+30) {
+    $("decision").textContent="COLLECTING DATA"; $("decisionNote").textContent="Need more history. Current digits: "+digits.length;
+    scores=null; refreshSignal(); return;
+  }
+  scores=walkForward(digits,Number($("lookback").value),Number($("minimum").value));
+  [["match","matchScore"],["differs","diffScore"],["parity","parityScore"],["barrier","barrierScore"]].forEach(([k,id])=>{
+    $(id).textContent=formatScore(scores[k]); $(id).className=scores[k].pass?"good":"bad";
+  });
+  const approved=Object.keys(scores).filter(k=>scores[k].pass);
+  $("decision").textContent=approved.length ? "VALIDATED CANDIDATE" : "NO SIGNAL";
+  $("decision").className="value "+(approved.length?"good":"wait");
+  $("decisionNote").textContent=approved.length ? "Passed historical screen: "+approved.join(", ")+". Future performance is uncertain." : "No strategy passed the sample-size and confidence-bound rules. No prediction will be forced.";
+  updateDiagnostics(digits); refreshSignal();
+}
+function requestHistory(count) {
+  $("historyState").textContent="Requesting "+count+" ticks";
+  send({ticks_history:symbol,count,end:"latest",style:"ticks",req_id:++reqId});
+}
+function connect() {
+  if (ws) { try { ws.onclose=null; ws.close(); } catch(e) {} }
+  digits=[]; bufferedTicks=[]; liveTicks=0; historyReady=false; scores=null; pending=null;
+  $("tickCount").textContent="0"; $("historyCount").textContent="0";
+  $("price").textContent="--"; $("lastDigit").textContent="--";
+  $("socket").textContent="Connecting"; $("marketState").textContent="Waiting";
+  $("historyState").textContent="Waiting"; $("stream").textContent="Waiting";
+  $("arm").disabled=true; setStatus("Opening Deriv connection...");
+  try { ws=new WebSocket(ENDPOINT); } catch(e) { setStatus("WebSocket error: "+e.message,"bad"); log("Socket error "+e.message); return; }
+
+  ws.onopen = function() {
+    $("socket").textContent="OPEN"; $("socket").className="good";
+    setStatus("Connected. Discovering markets...","good");
+    send({active_symbols:"brief",req_id:++reqId});
+  };
+  ws.onmessage = function(event) {
+    let data;
+    try { data=JSON.parse(event.data); } catch(e) { log("Invalid JSON message"); return; }
+    log("RECEIVED "+JSON.stringify(data).slice(0,350));
+    if (data.error) { setStatus("API error: "+data.error.message,"bad"); log("API ERROR "+data.error.message); return; }
+
+    if (data.msg_type==="active_symbols" || Array.isArray(data.active_symbols)) {
+      const list=data.active_symbols || [];
+      $("marketState").textContent="Received "+list.length+" symbols"; $("marketState").className="good";
+      const selected=list.find(x=>x.underlying_symbol===symbol);
+      if (selected) {
+        symbol=selected.underlying_symbol;
+        const pip=Number(selected.pip_size);
+        decimals=pip>0 ? Math.max(0,Math.min(8,Math.round(-Math.log10(pip)))) : 2;
+      }
+      setStatus("Market found. Requesting history and live ticks...","good");
+      requestHistory(5000);
+      send({ticks:symbol,subscribe:1,req_id:++reqId});
+      $("stream").textContent="Subscription requested";
+      return;
+    }
+
+    if (data.msg_type==="history" || data.history) {
+      const prices=data.history && Array.isArray(data.history.prices) ? data.history.prices : [];
+      if (!prices.length) { $("historyState").textContent="Empty"; setStatus("History response contained no prices.","bad"); return; }
+      digits=prices.map(lastDigit).filter(x=>x!==null).slice(-5000);
+      if (bufferedTicks.length) digits=digits.concat(bufferedTicks).slice(-5000);
+      historyReady=true; $("historyCount").textContent=digits.length;
+      $("historyState").textContent="Loaded "+prices.length; $("historyState").className="good";
+      setStatus("History loaded; live stream active.","good"); analyse(); return;
+    }
+
+    if (data.msg_type==="tick" && data.tick) {
+      const quote=Number(data.tick.quote), digit=lastDigit(quote);
+      if (digit===null) return;
+      liveTicks++; $("price").textContent=quote.toFixed(decimals);
+      $("lastDigit").textContent=digit; $("tickCount").textContent=liveTicks;
+      $("stream").textContent="Receiving live ticks"; $("stream").className="good";
+      if (historyReady) digits.push(digit); else bufferedTicks.push(digit);
+      if (digits.length>5000) digits.shift();
+
+      if (pending) {
+        const r=outcome(pending.kind,pending.prediction,digit);
+        if (!r.count) { pushes++; $("paperStatus").textContent="PUSH — digit 5; not counted as win/loss"; $("paperStatus").className="wait"; }
+        else {
+          if (r.win) wins++; else losses++;
+          $("paperStatus").textContent=(r.win?"WIN":"LOSS")+" — "+pending.label+" — next digit "+digit;
+          $("paperStatus").className=r.win?"good":"bad";
+        }
+        pending=null; updatePaper();
+      }
+      if (historyReady) { $("historyCount").textContent=digits.length; analyse(); }
+      setStatus("Live market data arriving: "+symbol,"good");
+    }
+  };
+  ws.onerror = function() { $("socket").textContent="ERROR"; $("socket").className="bad"; setStatus("WebSocket error. See diagnostic log.","bad"); log("WEBSOCKET ERROR"); };
+  ws.onclose = function(event) { $("socket").textContent="CLOSED "+event.code; $("socket").className="bad"; $("stream").textContent="Disconnected"; setStatus("Connection closed. Tap reconnect.","bad"); log("CLOSED "+event.code+" "+event.reason); };
+}
+
+$("reconnect").onclick=connect;
+$("analyse").onclick=analyse;
+$("lookback").onchange=analyse;
+$("minimum").onchange=analyse;
+$("contract").onchange=refreshSignal;
+$("arm").onclick=function() {
+  const kind=$("contract").value, look=Number($("lookback").value);
+  if (pending || wins+losses>=100 || !scores || !scores[kind] || !scores[kind].pass) return;
+  const prediction=forecast(digits.slice(-look),kind);
+  const label=kind==="match" ? "MATCH "+prediction.choice : kind==="differs" ? "DIFFER "+prediction.choice : kind==="parity" ? prediction.choice : prediction.choice+" 5";
+  pending={kind,prediction,label};
+  $("paperStatus").textContent="Armed for next live tick: "+label;
+  $("paperStatus").className="wait"; $("arm").disabled=true;
+};
+$("reset").onclick=function() {
+  wins=0; losses=0; pushes=0; pending=null; updatePaper();
+  $("paperStatus").textContent="Paper score reset. Not armed."; $("paperStatus").className="wait"; refreshSignal();
+};
+$("clear").onclick=function() { $("log").textContent="Log cleared."; };
+connect();
+</script>
+</body>
+</html>
