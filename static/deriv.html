@@ -210,10 +210,10 @@ send({active_symbols:"full",req_id:1});
 
      markets.forEach(m=>{
        const option=document.createElement("option");
-       option.value=m.symbol;
-       option.textContent=m.display_name+" ("+m.symbol+")";
-       select.appendChild(option);
-     });
+      option.value=m.underlying_symbol;
+option.textContent=m.underlying_symbol_name+
+  " ("+m.underlying_symbol+")";
+     
 
      if(markets.length){
        setStatus(markets.length+" Volatility markets loaded");
