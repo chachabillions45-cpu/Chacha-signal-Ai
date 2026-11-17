@@ -196,10 +196,12 @@ send({active_symbols:"full",req_id:1});
 
    if(data.msg_type==="active_symbols"){
      const markets=(data.active_symbols||[]).filter(s=>{
-       const name=(s.display_name||"").toLowerCase();
-       return name.includes("volatility") ||
-         /^(R_\d+|1HZ\d+V)$/i.test(s.symbol||"");
-     });
+  const name=(s.underlying_symbol_name||"").toLowerCase();
+  const symbol=s.underlying_symbol||"";
+
+  return name.includes("volatility") ||
+    /^(R_\d+|1HZ\d+V)$/i.test(symbol);
+});
 
      const select=document.getElementById("symbol");
      select.innerHTML="";
@@ -213,7 +215,6 @@ send({active_symbols:"full",req_id:1});
       option.value=m.underlying_symbol;
 option.textContent=m.underlying_symbol_name+
   " ("+m.underlying_symbol+")";
-     
 
      if(markets.length){
        setStatus(markets.length+" Volatility markets loaded");
