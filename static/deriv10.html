@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHACHA AI ENGINE 10</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:14px;background:#101827;color:#fff;font-family:Arial,sans-serif}
+h2{text-align:center;color:#38e8b5}.card{background:#1b293b;border:1px solid #30435b;border-radius:12px;padding:15px;margin:12px 0}
+label{display:block;color:#aab7c8;font-size:13px;margin:12px 0 6px}
+select,button{width:100%;padding:13px;border-radius:8px;border:1px solid #40546e;background:#101827;color:#fff;font-size:15px}
+button{background:#087f68;border:0;font-weight:bold;margin-top:12px}button:disabled{opacity:.45}
+.value{font-size:22px;font-weight:bold;color:#38e8b5;margin:7px 0}
+.small,.note{font-size:12px;color:#aab7c8}.note{line-height:1.6}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.row{display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid #30435b;font-size:13px}
+.good{color:#38e8b5}.bad{color:#ff7272}.wait{color:#ffc65c}
+</style>
+</head>
+<body>
+<h2>CHACHA AI ENGINE 10</h2>
+<p class="small" style="text-align:center">LIVE DERIV ANALYSIS • HOLDOUT VALIDATION • PAPER TEST ONLY</p>
+
+<div class="card">
+<h3>Live Market</h3>
+<label>Volatility market</label><select id="market"><option value="1HZ100V">Volatility 100 (1s)</option></select>
+<p id="status" class="wait">Connecting...</p>
+<div class="small">Live price</div><div class="value" id="price">--</div>
+<div class="small">Last digit: <b id="lastDigit">--</b> · Ticks: <b id="tickCount">0</b></div>
+</div>
+
+<div class="card">
+<h3>Analysis Settings</h3>
+<label>History window</label><select id="window"><option value="1000">Last 1,000 ticks</option><option value="2500">Last 2,500 ticks</option><option value="5000" selected>Last 5,000 ticks</option></select>
+<label>Prediction lookback</label><select id="lookback"><option value="50">Previous 50 ticks</option><option value="100" selected>Previous 100 ticks</option><option value="200">Previous 200 ticks</option><option value="300">Previous 300 ticks</option></select>
+<label>Minimum validation sample</label><select id="minSample"><option value="500" selected>500 scored outcomes</option><option value="750">750 scored outcomes</option><option value="1000">1,000 scored outcomes</option></select>
+<button id="analyse">RUN VALIDATION</button>
+</div>
+
+<div class="card">
+<h3>Signal Decision</h3>
+<div class="value wait" id="decision">COLLECTING DATA</div>
+<p class="note" id="decisionReason">Waiting for sufficient historical ticks.</p>
+<div class="row"><span>Current market digit</span><b id="currentDigit">--</b></div>
+<div class="row"><span>Validation design</span><b>Chronological holdout</b></div>
+<div class="row"><span>Scored holdout outcomes</span><b id="sampleCount">0</b></div>
+</div>
+
+<div class="card">
+<h3>Out-of-Sample Validation</h3>
+<p class="note">The earliest 60% of the selected history is reserved as the initial observation period. Strategy rules are then scored on the later 40%, in time order. Every prediction uses only the preceding lookback ticks. Digit 5 is excluded from Over/Under scoring as a push.</p>
+<div class="row"><span>Matches (one digit)</span><b id="matchScore">--</b></div>
+<div class="row"><span>Differs (exclude one digit)</span><b id="differsScore">--</b></div>
+<div class="row"><span>Even / Odd</span><b id="parityScore">--</b></div>
+<div class="row"><span>Over / Under 5 (5 is push)</span><b id="barrierScore">--</b></div>
+<p class="note" id="validationNote">A strategy must meet the minimum scored sample and have its 95% Wilson lower bound above its baseline. This is a screening test, not proof of a future advantage.</p>
+</div>
+
+<div class="card">
+<h3>Paper Test</h3>
+<p class="note">Only a strategy that passes validation can be armed. The next live tick is scored once. No trade is placed.</p>
+<label>Strategy</label><select id="strategy">
+<option value="match">Matches (one digit)</option>
+<option value="differs">Differs (exclude one digit)</option>
+<option value="parity">Even / Odd</option>
+<option value="barrier">Over / Under 5</option>
+</select>
+<div class="value wait" id="prediction">NO SIGNAL</div>
+<p class="note" id="predictionInfo">Run validation first.</p>
+<button id="paper" disabled>ARM NEXT-TICK PAPER TEST</button>
+<p id="paperStatus" class="wait">Not armed.</p>
+<div class="grid">
+<div><div class="small">Wins</div><div class="value good" id="wins">0</div></div>
+<div><div class="small">Losses</div><div class="value bad" id="losses">0</div></div>
+</div>
+<div class="row"><span>Paper-test win rate</span><b id="liveRate">--</b></div>
+</div>
+
+<div class="card">
+<h3>Important</h3>
+<p class="note">No algorithm can guarantee a winning prediction. Synthetic-market tick digits may not be reliably predictable. A historical pass does not guarantee future performance; tick outcomes can be dependent, so confidence bounds are only screening estimates. This is analysis and paper testing only, not financial advice or an automated trading system.</p>
+</div>
+
+<script>
+"use strict";
+const WS_URL="wss://api.derivws.com/trading/v1/options/ws/public";
+const MAX_HISTORY=5000;
+const $=id=>document.getElementById(id);
+let ws=null,ticks=[],symbol="1HZ100V",decimals=2,ready=false,pending=null;
+let wins=0,losses=0,retry=null,req=0,validation=null;
+function setStatus(s){$("status").textContent=s}
+function send(o){if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(o))}
+function getDigit(price){const s=Number(price).toFixed(decimals);return Number(s.charAt(s.length-1))}
+function counts(a){const c=Array(10).fill(0);for(const d of a)c[d]++;return c}
+function majority(a,kind){
+ const c=counts(a),even=c[0]+c[2]+c[4]+c[6]+c[8],odd=a.length-even;
+ const over=c[6]+c[7]+c[8]+c[9],under=c[0]+c[1]+c[2]+c[3]+c[4];
+ if(kind==="match")return {choice:c.indexOf(Math.max(...c))};
+ if(kind==="differs")return {choice:c.indexOf(Math.min(...c))};
+ if(kind==="parity")return {choice:even>=odd?"EVEN":"ODD"};
+ return {choice:over>=under?"OVER":"UNDER"};
+}
+function score(kind,p,d){
+ if(kind==="match")return {scored:true,win:d===p.choice};
+ if(kind==="differs")return {scored:true,win:d!==p.choice};
+ if(kind==="parity")return {scored:true,win:(d%2===0)===(p.choice==="EVEN")};
+ if(d===5)return {scored:false,win:false};
+ return {scored:true,win:p.choice==="OVER"?d>5:d<5};
+}
+function baseline(kind){return kind==="match"?.10:kind==="differs"?.90:.50}
+function wilsonLower(w,n){
+ if(!n)return 0;const z=1.96,p=w/n,z2=z*z;
+ return (p+z2/(2*n)-z*Math.sqrt((p*(1-p)+z2/(4*n))/n))/(1+z2/n);
+}
+function pct(w,n){return n?(100*w/n).toFixed(1)+"% ("+w+"/"+n+")":"No scored outcomes"}
+function validate(a,n,minN){
+ const kinds=["match","differs","parity","barrier"],out={};
+ for(const k of kinds)out[k]={w:0,n:0,approved:false,lower:0,rate:0};
+ // The first 60% is the initial observation segment; score only the later 40%.
+ const holdoutStart=Math.max(n,Math.floor(a.length*.60));
+ for(let i=holdoutStart;i<a.length;i++){
+  const past=a.slice(i-n,i),actual=a[i];
+  for(const k of kinds){
+   const result=score(k,majority(past,k),actual),r=out[k];
+   if(!result.scored)continue;
+   r.n++;if(result.win)r.w++;
+  }
+ }
+ for(const k of kinds){
+  const r=out[k];r.rate=r.n?r.w/r.n:0;r.lower=wilsonLower(r.w,r.n);
+  r.approved=r.n>=minN&&r.lower>baseline(k);
+ }
+ return out;
+}
+function display(){
+ const size=Number($("window").value),n=Number($("lookback").value),minN=Number($("minSample").value);
+ const a=ticks.slice(-size);
+ if(a.length<n+2){
+  validation=null;$("decision").textContent="COLLECTING DATA";
+  $("decisionReason").textContent="Collect more ticks. Current history: "+a.length+"; need more than the selected lookback of "+n+".";
+  $("sampleCount").textContent="0";updateSignal();return;
+ }
+ validation=validate(a,n,minN);
+ const ids={match:"matchScore",differs:"differsScore",parity:"parityScore",barrier:"barrierScore"};
+ for(const k of Object.keys(ids)){
+  const r=validation[k];
+  $(ids[k]).textContent=pct(r.w,r.n)+" · 95% lower bound "+(r.lower*100).toFixed(1)+"% · "+(r.approved?"PASS":"NO PASS");
+  $(ids[k]).className=r.approved?"good":"bad";
+ }
+ const approved=Object.keys(validation).filter(k=>validation[k].approved);
+ $("sampleCount").textContent=validation.match.n;
+ $("decision").textContent=approved.length?"VALIDATED CANDIDATE(S)":"NO SIGNAL";
+ $("decision").className="value "+(approved.length?"good":"wait");
+ $("decisionReason").textContent=approved.length?approved.join(", ")+" passed the historical screening filter. This is not a guarantee.":"No strategy passed the conservative validation filter. Do not force a prediction.";
+ $("validationNote").textContent="Baselines: Matches 10%; Differs 90%; Even/Odd 50%; Over/Under 50% of non-5 digits. A pass requires the minimum scored sample and 95% Wilson lower bound above baseline.";
+ updateSignal();
+}
+function updateSignal(){
+ const k=$("strategy").value,n=Number($("lookback").value);
+ if(!ready||ticks.length<n||!validation||!validation[k]||!validation[k].approved){
+  $("prediction").textContent="NO SIGNAL";$("prediction").className="value wait";
+  $("predictionInfo").textContent="Selected strategy has not passed validation, or data is not ready.";
+  $("paper").disabled=true;return;
+ }
+ const p=majority(ticks.slice(-n),k);
+ const text=k==="match"?"MATCH "+p.choice:k==="differs"?"DIFFER "+p.choice:k==="parity"?p.choice:p.choice+" 5";
+ $("prediction").textContent=text;$("prediction").className="value good";
+ $("predictionInfo").textContent="Based on previous "+n+" ticks. Holdout scored sample: "+validation[k].n+"; observed "+(validation[k].rate*100).toFixed(1)+"%; 95% lower bound "+(validation[k].lower*100).toFixed(1)+"%.";
+ $("paper").disabled=!!pending;
+}
+function runAnalysis(){display()}
+function connect(sym){
+ symbol=sym;ready=false;ticks=[];pending=null;validation=null;
+ $("tickCount").textContent="0";$("price").textContent="--";$("lastDigit").textContent="--";
+ $("paperStatus").textContent="Waiting for market data.";updateSignal();
+ if(retry)clearTimeout(retry);if(ws){ws.onclose=null;try{ws.close()}catch(e){}}
+ ws=new WebSocket(WS_URL);
+ ws.onopen=()=>{setStatus("Connected. Finding Volatility markets...");send({active_symbols:"full",req_id:++req})};
+ ws.onmessage=e=>{
+  let d;try{d=JSON.parse(e.data)}catch(_){return}
+  if(d.error){setStatus("Deriv error: "+d.error.message);return}
+  if(d.msg_type==="active_symbols"){
+   const list=(d.active_symbols||[]).filter(m=>m.market==="synthetic_index"&&(m.underlying_symbol_name||"").toLowerCase().includes("volatility"));
+   if(!list.length){setStatus("No Volatility markets returned by Deriv.");return;}
+   const sel=$("market"),old=symbol;sel.innerHTML="";
+   list.forEach(m=>{const o=document.createElement("option");o.value=m.underlying_symbol;o.textContent=m.display_name||m.underlying_symbol_name;sel.appendChild(o)});
+   const chosen=list.find(m=>m.underlying_symbol===old)||list.find(m=>m.underlying_symbol==="1HZ100V")||list[0];
+   sel.value=chosen.underlying_symbol;symbol=chosen.underlying_symbol;
+   const pip=Number(chosen.pip_size);decimals=pip>0?Math.max(0,Math.min(8,Math.round(-Math.log10(pip)))):2;
+   setStatus("Loading up to 5,000 ticks for "+(chosen.display_name||symbol)+"...");
+   send({ticks_history:symbol,count:MAX_HISTORY,end:"latest",style:"ticks",req_id:++req});
+  }
+  if(d.msg_type==="history"&&d.history){
+   ticks=(d.history.prices||[]).map(getDigit).slice(-MAX_HISTORY);ready=true;
+   $("tickCount").textContent=ticks.length;send({ticks:symbol,subscribe:1,req_id:++req});
+   setStatus("Live scanning: "+symbol);display();
+  }
+  if(d.msg_type==="tick"&&d.tick){
+   const price=Number(d.tick.quote),digit=getDigit(price);
+   $("price").textContent=price.toFixed(decimals);$("lastDigit").textContent=digit;
+   $("currentDigit").textContent=digit;
+   if(!ready)return;
+   if(pending){
+    const result=score(pending.kind,pending.prediction,digit);
+    if(!result.scored){
+     $("paperStatus").textContent="PUSH — digit 5; no win or loss recorded.";
+     $("paperStatus").className="wait";
+    }else{
+     if(result.win)wins++;else losses++;
+     $("wins").textContent=wins;$("losses").textContent=losses;
+     $("liveRate").textContent=(100*wins/(wins+losses)).toFixed(1)+"%";
+     $("paperStatus").textContent=(result.win?"WIN":"LOSS")+" — "+pending.label+" — next digit: "+digit;
+     $("paperStatus").className=result.win?"good":"bad";
+    }
+    pending=null;
+   }
+   ticks.push(digit);if(ticks.length>MAX_HISTORY)ticks.shift();
+   $("tickCount").textContent=ticks.length;display();setStatus("Live scanning: "+symbol);
+  }
+ };
+ ws.onerror=()=>setStatus("Connection issue. Retrying...");
+ ws.onclose=()=>{setStatus("Disconnected. Reconnecting...");retry=setTimeout(()=>connect(symbol),4000)};
+}
+$("paper").addEventListener("click",()=>{
+ if(pending||!validation)return;
+ const k=$("strategy").value,n=Number($("lookback").value);
+ if(!validation[k]||!validation[k].approved){$("paperStatus").textContent="NO SIGNAL — strategy did not pass validation.";return;}
+ const p=majority(ticks.slice(-n),k);
+ const label=k==="match"?"MATCH "+p.choice:k==="differs"?"DIFFER "+p.choice:k==="parity"?p.choice:p.choice+" 5";
+ pending={kind:k,prediction:p,label};
+ $("paperStatus").textContent="Armed: waiting for exactly the next live tick to score "+label+".";
+ $("paperStatus").className="wait";$("paper").disabled=true;
+});
+$("strategy").addEventListener("change",updateSignal);
+$("window").addEventListener("change",display);$("lookback").addEventListener("change",display);
+$("minSample").addEventListener("change",display);$("analyse").addEventListener("click",runAnalysis);
+$("market").addEventListener("change",e=>connect(e.target.value));
+connect("1HZ100V");
+</script>
+</body></html>
