@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHACHA AI SIGNAL ENGINE PRO</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:14px;background:#101827;color:white;font-family:Arial}
+h2{text-align:center;color:#38e8b5}
+.card{background:#1b293b;border:1px solid #30435b;border-radius:12px;padding:15px;margin:12px 0}
+label{display:block;color:#aab7c8;font-size:13px;margin:12px 0 6px}
+select,button{width:100%;padding:13px;border-radius:8px;border:1px solid #40546e;background:#101827;color:white;font-size:15px}
+button{background:#087f68;border:0;font-weight:bold;margin-top:12px}
+button:disabled{opacity:.5}
+.value{font-size:23px;font-weight:bold;color:#38e8b5;margin:7px 0}
+.small{font-size:12px;color:#aab7c8}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.digits{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin-top:12px}
+.digit{background:#101827;border-radius:8px;text-align:center;padding:9px 2px;font-size:12px}
+.digit strong{display:block;font-size:19px;margin-bottom:5px}
+.wait{color:#ffc65c}
+.good{color:#38e8b5}
+.bad{color:#ff7272}
+.note{font-size:12px;line-height:1.6;color:#aab7c8}
+hr{border:0;border-top:1px solid #30435b;margin:14px 0}
+</style>
+</head>
+<body>
+
+<h2>CHACHA AI SIGNAL ENGINE PRO</h2>
+<p class="small" style="text-align:center">LIVE DERIV MARKET ANALYSER</p>
+
+<div class="card">
+<h3>Live Market Connection</h3>
+<label>Select Volatility Market</label>
+<select id="market">
+<option value="1HZ100V">Volatility 100 (1s)</option>
+</select>
+<p id="status" class="wait">Connecting...</p>
+<div class="small">Live price</div>
+<div class="value" id="price">--</div>
+<div class="small">Last digit: <b id="lastDigit">--</b></div>
+<div class="small">Ticks collected: <b id="tickCount">0</b></div>
+</div>
+
+<div class="card">
+<h3>Contract Settings</h3>
+<label>Contract type</label>
+<select id="contract">
+<option value="matches">Matches</option>
+<option value="differs">Differs</option>
+<option value="even">Even</option>
+<option value="odd">Odd</option>
+<option value="over">Over</option>
+<option value="under">Under</option>
+</select>
+
+<label id="choiceLabel">Choose digit</label>
+<select id="choice">
+<option value="0">0</option>
+<option value="1">1</option>
+<option value="2">2</option>
+<option value="3">3</option>
+<option value="4">4</option>
+<option value="5">5</option>
+<option value="6">6</option>
+<option value="7">7</option>
+<option value="8">8</option>
+<option value="9">9</option>
+</select>
+
+<label>Analysis window</label>
+<select id="window">
+<option value="100">Last 100 ticks</option>
+<option value="500">Last 500 ticks</option>
+<option value="1000" selected>Last 1000 ticks</option>
+</select>
+
+<button id="analyse">ANALYSE MARKET</button>
+</div>
+
+<div class="card">
+<h3>Contract Analysis</h3>
+<div class="grid">
+<div>
+<div class="small">Observed frequency</div>
+<div class="value" id="observed">--</div>
+</div>
+<div>
+<div class="small">Theoretical baseline</div>
+<div class="value" id="baseline">--</div>
+</div>
+<div>
+<div class="small">Matching outcomes</div>
+<div class="value" id="hits">--</div>
+</div>
+<div>
+<div class="small">Samples analysed</div>
+<div class="value" id="samples">--</div>
+</div>
+</div>
+<hr>
+<div class="small">Signal decision</div>
+<div class="value wait" id="signal">WAIT</div>
+<p class="note" id="reason">Waiting for market data.</p>
+</div>
+
+<div class="card">
+<h3>Digit Frequency</h3>
+<div class="digits" id="digits"></div>
+<hr>
+<div class="grid">
+<div>
+<div class="small">Most frequent digit</div>
+<div class="value" id="hot">--</div>
+</div>
+<div>
+<div class="small">Least frequent digit</div>
+<div class="value" id="cold">--</div>
+</div>
+</div>
+</div>
+
+<div class="card">
+<h3>Even / Odd Analysis</h3>
+<div class="grid">
+<div>
+<div class="small">Even</div>
+<div class="value" id="evenRate">--</div>
+</div>
+<div>
+<div class="small">Odd</div>
+<div class="value" id="oddRate">--</div>
+</div>
+</div>
+<hr>
+<h3>Over / Under Analysis</h3>
+<p class="note">Barrier 5: Over means 6–9. Under means 0–4.</p>
+<div class="grid">
+<div>
+<div class="small">Over 5</div>
+<div class="value" id="overRate">--</div>
+</div>
+<div>
+<div class="small">Under 5</div>
+<div class="value" id="underRate">--</div>
+</div>
+</div>
+</div>
+
+<div class="card">
+<h3>Paper WIN / LOSS Test</h3>
+<p class="note">
+Press the button to test your selected contract against the next live tick.
+This is a simulation, not a real trade.
+</p>
+<button id="paperButton">TEST NEXT TICK</button>
+<p id="paperStatus" class="wait">Ready for testing.</p>
+<hr>
+<div class="grid">
+<div>
+<div class="small">Total tests</div>
+<div class="value" id="totalTests">0</div>
+</div>
+<div>
+<div class="small">Wins</div>
+<div class="value good" id="wins">0</div>
+</div>
+<div>
+<div class="small">Losses</div>
+<div class="value bad" id="losses">0</div>
+</div>
+<div>
+<div class="small">Win rate</div>
+<div class="value" id="winRate">0%</div>
+</div>
+</div>
+<button id="resetButton" style="background:#9b3544">RESET TEST RESULTS</button>
+</div>
+
+<div class="card">
+<h3>Important Information</h3>
+<p class="note">
+This analyser measures historical digit frequencies and tests outcomes.
+Past frequencies do not establish that the next digit is predictable.
+WAIT means no proven trading advantage has been established.
+Paper test results do not guarantee future performance or profit.
+</p>
+</div>
+
+<script>
+const WS_URL="wss://api.derivws.com/trading/v1/options/ws/public";
+
+let ws=null;
+let ticks=[];
+let decimals=2;
+let currentSymbol="1HZ100V";
+let reconnectTimer=null;
+let requestId=0;
+let manuallyClosed=false;
+let historyLoaded=false;
+let pendingTest=false;
+let total=0,wins=0,losses=0;
+
+const $=id=>document.getElementById(id);
+
+function status(message){
+  $("status").textContent=message;
+}
+
+function getDecimals(pip){
+  const n=Number(pip);
+  if(Number.isInteger(n)) return Math.max(0,Math.min(10,n));
+  const s=String(pip);
+  return s.includes(".") ? s.split(".")[1].length : 2;
+}
+
+function digitFromPrice(price){
+  const formatted=Number(price).toFixed(decimals);
+  return Number(formatted.charAt(formatted.length-1));
+}
+
+function send(obj){
+  if(ws && ws.readyState===WebSocket.OPEN){
+    ws.send(JSON.stringify(obj));
+  }
+}
+
+function connect(symbol){
+  currentSymbol=symbol;
+  manuallyClosed=false;
+  historyLoaded=false;
+  ticks=[];
+  pendingTest=false;
+
+  $("paperButton").disabled=false;
+  $("paperStatus").textContent="Ready for testing.";
+  $("price").textContent="--";
+  $("lastDigit").textContent="--";
+  $("tickCount").textContent="0";
+  $("digits").innerHTML="";
+  $("signal").textContent="WAIT";
+  $("reason").textContent="Loading market history...";
+  status("Connecting to Deriv...");
+
+  if(reconnectTimer) clearTimeout(reconnectTimer);
+  if(ws){
+    manuallyClosed=true;
+    ws.onclose=null;
+    try{ws.close();}catch(e){}
+  }
+
+  manuallyClosed=false;
+  ws=new WebSocket(WS_URL);
+
+  ws.onopen=()=>{
+    status("Connected. Finding markets...");
+    send({
+      active_symbols:"full",
+      req_id:++requestId
+    });
+  };
+
+  ws.onmessage=event=>{
+    let data;
+    try{data=JSON.parse(event.data);}catch(e){return;}
+
+    if(data.error){
+      status("Deriv error: "+data.error.message);
+      return;
+    }
+
+    if(data.msg_type==="active_symbols"){
+      const markets=(data.active_symbols||[]).filter(m=>
+        m.market==="synthetic_index" &&
+        (m.underlying_symbol_name||"").toLowerCase().includes("volatility")
+      );
+
+      if(!markets.length){
+        status("No Volatility markets found.");
+        return;
+      }
+
+      const select=$("market");
+      const previous=currentSymbol;
+      select.innerHTML="";
+
+      markets.forEach(m=>{
+        const opt=document.createElement("option");
+        opt.value=m.underlying_symbol;
+        opt.textContent=m.display_name||m.underlying_symbol_name;
+        select.appendChild(opt);
+      });
+
+      const chosen=markets.find(m=>m.underlying_symbol===previous)
+        ||markets[0];
+
+      select.value=chosen.underlying_symbol;
+      currentSymbol=chosen.underlying_symbol;
+      decimals=getDecimals(chosen.pip_size);
+
+      status("Loading "+(chosen.display_name||currentSymbol)+"...");
+
+      send({
+        ticks_history:currentSymbol,
+        count:1000,
+        end:"latest",
+        style:"ticks",
+        req_id:++requestId
+      });
+    }
+
+    if(data.msg_type==="history" && data.history){
+      const prices=data.history.prices||[];
+      ticks=prices.map(digitFromPrice).slice(-1000);
+      historyLoaded=true;
+
+      $("tickCount").textContent=ticks.length;
+      render();
+
+      send({
+        ticks:currentSymbol,
+        subscribe:1,
+        req_id:++requestId
+      });
+
+      status("Live analysis running: "+currentSymbol);
+    }
+
+    if(data.msg_type==="tick" && data.tick){
+      const price=data.tick.quote;
+      const digit=digitFromPrice(price);
+
+      $("price").textContent=Number(price).toFixed(decimals);
+      $("lastDigit").textContent=digit;
+
+      if(!historyLoaded) return;
+
+      ticks.push(digit);
+      if(ticks.length>1000) ticks.shift();
+
+      $("tickCount").textContent=ticks.length;
+
+      if(pendingTest){
+        recordPaperResult(digit);
+      }
+
+      render();
+      status("Live analysis running: "+currentSymbol);
+    }
+  };
+
+  ws.onerror=()=>{
+    status("Connection problem. Retrying...");
+  };
+
+  ws.onclose=()=>{
+    if(manuallyClosed) return;
+    status("Disconnected. Reconnecting...");
+    reconnectTimer=setTimeout(()=>connect(currentSymbol),4000);
+  };
+}
+
+function matchesContract(d,type,choice){
+  const c=Number(choice);
+
+  if(type==="matches") return d===c;
+  if(type==="differs") return d!==c;
+  if(type==="even") return d%2===0;
+  if(type==="odd") return d%2===1;
+  if(type==="over") return d>c;
+  if(type==="under") return d<c;
+
+  return false;
+}
+
+function theoreticalBaseline(type,choice){
+  const c=Number(choice);
+
+  if(type==="matches") return 10;
+  if(type==="differs") return 90;
+  if(type==="even"||type==="odd") return 50;
+  if(type==="over") return (9-c)*10;
+  if(type==="under") return c*10;
+
+  return 0;
+}
+
+function render(){
+  const limit=Number($("window").value);
+  const sample=ticks.slice(-limit);
+
+  if(sample.length<20){
+    $("reason").textContent="Waiting for at least 20 ticks.";
+    return;
+  }
+
+  const counts=Array(10).fill(0);
+  sample.forEach(d=>counts[d]++);
+
+  const totalTicks=sample.length;
+  const rates=counts.map(n=>n/totalTicks*100);
+
+  $("digits").innerHTML=counts.map((n,i)=>
+    `<div class="digit"><strong>${i}</strong>
+    ${rates[i].toFixed(1)}%
+    <br>${n} ticks</div>`
+  ).join("");
+
+  const max=Math.max(...counts);
+  const min=Math.min(...counts);
+
+  $("hot").textContent=counts.indexOf(max);
+  $("cold").textContent=counts.indexOf(min);
+
+  const even=counts[0]+counts[2]+counts[4]+counts[6]+counts[8];
+  const odd=totalTicks-even;
+  const over=counts[6]+counts[7]+counts[8]+counts[9];
+  const under=counts[0]+counts[1]+counts[2]+counts[3]+counts[4];
+
+  $("evenRate").textContent=(even/totalTicks*100).toFixed(1)+"%";
+  $("oddRate").textContent=(odd/totalTicks*100).toFixed(1)+"%";
+  $("overRate").textContent=(over/totalTicks*100).toFixed(1)+"%";
+  $("underRate").textContent=(under/totalTicks*100).toFixed(1)+"%";
+
+  const type=$("contract").value;
+  const choice=$("choice").value;
+
+  const hits=sample.filter(d=>
+    matchesContract(d,type,choice)
+  ).length;
+
+  const observed=hits/totalTicks*100;
+  const baseline=theoreticalBaseline(type,choice);
+
+  $("observed").textContent=observed.toFixed(1)+"%";
+  $("baseline").textContent=baseline.toFixed(1)+"%";
+  $("hits").textContent=hits;
+  $("samples").textContent=totalTicks;
+
+  $("signal").textContent="WAIT";
+  $("signal").className="value wait";
+
+  const difference=observed-baseline;
+
+  $("reason").textContent=
+    "Historical frequency is "+
+    (difference>=0?"+":"")+
+    difference.toFixed(1)+
+    " percentage points versus the theoretical baseline. "+
+    "This does not prove the next outcome is predictable.";
+}
+
+function updateChoice(){
+  const type=$("contract").value;
+  const noChoice=type==="even"||type==="odd";
+
+  $("choice").disabled=noChoice;
+  $("choiceLabel").textContent=noChoice
+    ?"No digit needed"
+    :(type==="over"||type==="under"?"Choose barrier":"Choose digit");
+
+  render();
+}
+
+function recordPaperResult(digit){
+  const type=$("contract").value;
+  const choice=$("choice").value;
+  const won=matchesContract(digit,type,choice);
+
+  total++;
+
+  if(won){
+    wins++;
+    $("paperStatus").textContent=
+      "WIN — Next digit was "+digit;
+    $("paperStatus").className="good";
+  }else{
+    losses++;
+    $("paperStatus").textContent=
+      "LOSS — Next digit was "+digit;
+    $("paperStatus").className="bad";
+  }
+
+  pendingTest=false;
+  $("paperButton").disabled=false;
+  updatePaperStats();
+}
+
+function updatePaperStats(){
+  $("totalTests").textContent=total;
+  $("wins").textContent=wins;
+  $("losses").textContent=losses;
+  $("winRate").textContent=
+    (total?(wins/total*100):0).toFixed(1)+"%";
+}
+
+$("market").addEventListener("change",e=>{
+  connect(e.target.value);
+});
+
+$("contract").addEventListener("change",updateChoice);
+$("choice").addEventListener("change",render);
+$("window").addEventListener("change",render);
+$("analyse").addEventListener("click",render);
+
+$("paperButton").addEventListener("click",()=>{
+  if(pendingTest || !historyLoaded) return;
+
+  pendingTest=true;
+  $("paperButton").disabled=true;
+  $("paperStatus").textContent="Waiting for the next live tick...";
+  $("paperStatus").className="wait";
+});
+
+$("resetButton").addEventListener("click",()=>{
+  total=0;
+  wins=0;
+  losses=0;
+  pendingTest=false;
+  $("paperButton").disabled=false;
+  $("paperStatus").textContent="Results reset.";
+  updatePaperStats();
+});
+
+updateChoice();
+connect("1HZ100V");
+</script>
+</body>
+</html>
