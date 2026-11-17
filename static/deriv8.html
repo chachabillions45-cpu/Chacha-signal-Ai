@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHACHA AI ADVANCED ENGINE 8</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:14px;background:#101827;color:white;font-family:Arial}
+h2{text-align:center;color:#38e8b5}.card{background:#1b293b;border:1px solid #30435b;border-radius:12px;padding:15px;margin:12px 0}
+label{display:block;color:#aab7c8;font-size:13px;margin:12px 0 6px}
+select,button{width:100%;padding:13px;border-radius:8px;border:1px solid #40546e;background:#101827;color:white;font-size:15px}
+button{background:#087f68;border:0;font-weight:bold;margin-top:12px}.value{font-size:23px;font-weight:bold;color:#38e8b5;margin:7px 0}
+.small,.note{font-size:12px;color:#aab7c8}.note{line-height:1.6}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.row{display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid #30435b;font-size:13px}
+.good{color:#38e8b5}.bad{color:#ff7272}.wait{color:#ffc65c}hr{border:0;border-top:1px solid #30435b;margin:14px 0}
+</style>
+</head>
+<body>
+<h2>CHACHA AI ADVANCED ENGINE</h2>
+<p class="small" style="text-align:center">LIVE DERIV MARKET ANALYSER — PAPER TEST ONLY</p>
+<div class="card">
+<h3>Live Market</h3><label>Select Volatility market</label>
+<select id="market"><option value="1HZ100V">Volatility 100 (1s)</option></select>
+<p id="status" class="wait">Connecting...</p><div class="small">Live price</div><div class="value" id="price">--</div>
+<div class="small">Last digit: <b id="lastDigit">--</b></div><div class="small">Ticks collected: <b id="tickCount">0</b></div>
+</div>
+<div class="card">
+<h3>Analysis Settings</h3><label>History window</label>
+<select id="window"><option value="100">Last 100 ticks</option><option value="500">Last 500 ticks</option><option value="1000" selected>Last 1000 ticks</option></select>
+<label>Prediction lookback</label><select id="lookback"><option value="50">Previous 50 ticks</option><option value="100" selected>Previous 100 ticks</option><option value="200">Previous 200 ticks</option></select>
+<button id="analyse">RUN ANALYSIS</button>
+</div>
+<div class="card">
+<h3>Market Intelligence</h3><div class="grid">
+<div><div class="small">Most frequent digit</div><div class="value" id="hot">--</div></div>
+<div><div class="small">Least frequent digit</div><div class="value" id="cold">--</div></div>
+<div><div class="small">Even frequency</div><div class="value" id="even">--</div></div>
+<div><div class="small">Odd frequency</div><div class="value" id="odd">--</div></div></div>
+<hr><div class="value wait" id="assessment">COLLECTING DATA</div><p class="note" id="assessmentReason">Waiting for sufficient history.</p>
+</div>
+<div class="card">
+<h3>Strategy Backtesting</h3><p class="note">Each strategy is tested independently against the next historical tick. Past results do not guarantee future outcomes.</p>
+<div class="row"><span>Matches (most frequent digit)</span><b id="matchResult">--</b></div>
+<div class="row"><span>Even / Odd majority</span><b id="parityResult">--</b></div>
+<div class="row"><span>Over / Under 5 majority</span><b id="barrierResult">--</b></div>
+</div>
+<div class="card">
+<h3>Live Next-Tick Paper Test</h3>
+<p class="note">Select ONE strategy. The next incoming tick is scored only for that strategy. No real trade is placed.</p>
+<label>Strategy to test</label><select id="strategy">
+<option value="match">Matches (selected digit)</option><option value="parity">Even / Odd</option><option value="barrier">Over / Under 5</option></select>
+<div class="small">Current prediction</div><div class="value wait" id="prediction">WAIT</div>
+<p class="note" id="predictionInfo">Waiting for enough ticks.</p>
+<button id="paper">TEST NEXT LIVE TICK</button><p id="paperStatus" class="wait">Ready.</p>
+<div class="grid"><div><div class="small">Live wins</div><div class="value good" id="liveWins">0</div></div>
+<div><div class="small">Live losses</div><div class="value bad" id="liveLosses">0</div></div></div>
+</div>
+<div class="card"><h3>Important Notice</h3><p class="note">This is a market-data analyser and paper-testing tool, not a trading system. Historical frequencies do not prove a predictive edge. It does not place trades or guarantee accuracy or profits.</p></div>
+<script>
+const WS_URL="wss://api.derivws.com/trading/v1/options/ws/public";
+const $=id=>document.getElementById(id);
+let ws,ticks=[],symbol="1HZ100V",decimals=2,historyReady=false,pending=null,liveWins=0,liveLosses=0,retryTimer=null,requestId=0;
+function status(s){$("status").textContent=s}
+function send(o){if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(o))}
+function digitOf(price){let s=Number(price).toFixed(decimals);return Number(s[s.length-1])}
+function counts(a){let c=Array(10).fill(0);a.forEach(x=>c[x]++);return c}
+function pick(a){let c=counts(a),hot=c.indexOf(Math.max(...c)),even=c[0]+c[2]+c[4]+c[6]+c[8],odd=a.length-even,over=c[6]+c[7]+c[8]+c[9],under=c[0]+c[1]+c[2]+c[3]+c[4];return {digit:hot,parity:even>=odd?"even":"odd",barrier:over>=under?"over":"under"}}
+function rate(w,l){return w+l?((w/(w+l))*100).toFixed(1)+"% ("+w+"W/"+l+"L)":"Not enough data"}
+function backtest(a,n){let r={mw:0,ml:0,pw:0,pl:0,bw:0,bl:0};for(let i=n;i<a.length;i++){let p=pick(a.slice(i-n,i)),d=a[i];if(d===p.digit)r.mw++;else r.ml++;if((d%2===0)===(p.parity==="even"))r.pw++;else r.pl++;if(p.barrier==="over"?d>5:d<5)r.bw++;else r.bl++}return r}
+function analyse(){let size=Number($("window").value),n=Number($("lookback").value),a=ticks.slice(-size);if(a.length<n+20){$("assessment").textContent="COLLECTING DATA";$("assessmentReason").textContent="Need at least "+(n+20)+" ticks.";return}
+let c=counts(a),even=c[0]+c[2]+c[4]+c[6]+c[8];$("hot").textContent=c.indexOf(Math.max(...c));$("cold").textContent=c.indexOf(Math.min(...c));$("even").textContent=(even/a.length*100).toFixed(1)+"%";$("odd").textContent=((a.length-even)/a.length*100).toFixed(1)+"%";
+let r=backtest(a,n);$("matchResult").textContent=rate(r.mw,r.ml);$("parityResult").textContent=rate(r.pw,r.pl);$("barrierResult").textContent=rate(r.bw,r.bl);
+let best=[["Matches",r.mw,r.ml],["Even/Odd",r.pw,r.pl],["Over/Under",r.bw,r.bl]].sort((x,y)=>y[1]/(y[1]+y[2])-x[1]/(x[1]+x[2]))[0];
+$("assessment").textContent="BACKTEST COMPLETE";$("assessmentReason").textContent="Highest historical hit rate: "+best[0]+" "+rate(best[1],best[2])+". Not a proven next-tick advantage.";
+let p=pick(ticks.slice(-n));$("prediction").textContent="Matches "+p.digit+" | "+p.parity.toUpperCase()+" | "+p.barrier.toUpperCase()+" 5";$("predictionInfo").textContent="Candidates calculated from the previous "+n+" ticks. Choose one strategy below to paper-test.";
+}
+function connect(sym){symbol=sym;historyReady=false;ticks=[];pending=null;$("paper").disabled=false;$("tickCount").textContent="0";$("price").textContent="--";$("lastDigit").textContent="--";$("prediction").textContent="WAIT";$("paperStatus").textContent="Ready. Reconnecting to market.";if(retryTimer)clearTimeout(retryTimer);if(ws){ws.onclose=null;try{ws.close()}catch(e){}}
+ws=new WebSocket(WS_URL);ws.onopen=()=>{status("Connected. Loading market list...");send({active_symbols:"full",req_id:++requestId})};
+ws.onmessage=e=>{let d;try{d=JSON.parse(e.data)}catch(_){return}if(d.error){status("Deriv error: "+d.error.message);return}
+if(d.msg_type==="active_symbols"){let list=(d.active_symbols||[]).filter(m=>m.market==="synthetic_index"&&(m.underlying_symbol_name||"").toLowerCase().includes("volatility"));if(!list.length){status("No Volatility markets found.");return}
+let sel=$("market"),old=symbol;sel.innerHTML="";list.forEach(m=>{let o=document.createElement("option");o.value=m.underlying_symbol;o.textContent=m.display_name||m.underlying_symbol_name;sel.appendChild(o)});let chosen=list.find(m=>m.underlying_symbol===old)||list.find(m=>m.underlying_symbol==="1HZ100V")||list[0];sel.value=chosen.underlying_symbol;symbol=chosen.underlying_symbol;let pip=Number(chosen.pip_size);decimals=pip>0?Math.max(0,Math.min(8,Math.round(-Math.log10(pip)))):2;status("Loading "+(chosen.display_name||symbol)+"...");send({ticks_history:symbol,count:1000,end:"latest",style:"ticks",req_id:++requestId})}
+if(d.msg_type==="history"&&d.history){ticks=(d.history.prices||[]).map(digitOf).slice(-1000);historyReady=true;$("tickCount").textContent=ticks.length;analyse();send({ticks:symbol,subscribe:1,req_id:++requestId});status("Live scanning: "+symbol)}
+if(d.msg_type==="tick"&&d.tick){let price=d.tick.quote,digit=digitOf(price);$("price").textContent=Number(price).toFixed(decimals);$("lastDigit").textContent=digit;if(!historyReady)return;ticks.push(digit);if(ticks.length>1000)ticks.shift();$("tickCount").textContent=ticks.length;
+if(pending){let won=pending.check(digit);if(won)liveWins++;else liveLosses++;$("liveWins").textContent=liveWins;$("liveLosses").textContent=liveLosses;$("paperStatus").textContent=(won?"WIN":"LOSS")+" — "+pending.label+" — next digit: "+digit;$("paperStatus").className=won?"good":"bad";pending=null;$("paper").disabled=false}
+analyse();status("Live scanning: "+symbol)}};
+ws.onerror=()=>status("Connection problem. Retrying...");ws.onclose=()=>{status("Disconnected. Reconnecting...");retryTimer=setTimeout(()=>connect(symbol),4000)}}
+$("paper").addEventListener("click",()=>{if(pending||!historyReady)return;let n=Number($("lookback").value),a=ticks.slice(-n);if(a.length<n){$("paperStatus").textContent="Collect more ticks first.";return}let p=pick(a),s=$("strategy").value,label,check;
+if(s==="match"){label="MATCHES "+p.digit;check=d=>d===p.digit}else if(s==="parity"){label=p.parity.toUpperCase();check=d=>(d%2===0)===(p.parity==="even")}else{label=p.barrier.toUpperCase()+" 5";check=d=>p.barrier==="over"?d>5:d<5}
+pending={check,label};$("prediction").textContent=label;$("paperStatus").className="wait";$("paperStatus").textContent="Waiting for the next live tick to score "+label+"...";$("paper").disabled=true});
+$("market").addEventListener("change",e=>connect(e.target.value));$("window").addEventListener("change",analyse);$("lookback").addEventListener("change",analyse);$("analyse").addEventListener("click",analyse);connect("1HZ100V");
+</script>
+</body></html>
