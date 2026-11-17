@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CHACHA AI ENGINE 13</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:14px;background:#101827;color:#fff;font-family:Arial,sans-serif}
+h2{text-align:center;color:#38e8b5;margin:8px 0}.sub{text-align:center;color:#aab7c8;font-size:12px}
+.card{background:#1b293b;border:1px solid #30435b;border-radius:12px;padding:15px;margin:12px 0}
+label{display:block;color:#aab7c8;font-size:13px;margin:12px 0 6px}
+select,button{width:100%;padding:13px;border-radius:8px;border:1px solid #40546e;background:#101827;color:#fff;font-size:15px}
+button{background:#087f68;border:0;font-weight:bold;margin-top:10px}button:disabled{opacity:.45}
+.value{font-size:22px;font-weight:bold;color:#38e8b5;margin:7px 0}.small,.note{font-size:12px;color:#aab7c8}.note{line-height:1.55}
+.row{display:flex;justify-content:space-between;gap:8px;padding:9px 0;border-bottom:1px solid #30435b;font-size:13px}
+.good{color:#38e8b5}.bad{color:#ff7272}.wait{color:#ffc65c}
+.log{max-height:210px;overflow:auto;background:#0b1220;border-radius:8px;padding:10px;font:11px/1.5 monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:#cbd5e1}
+</style>
+</head>
+<body>
+<h2>CHACHA AI ENGINE 13</h2>
+<p class="sub">LIVE DERIV ANALYSIS • CONNECTION DIAGNOSTICS • PAPER TEST ONLY</p>
+
+<div class="card">
+<h3>Live Market</h3>
+<label for="market">Volatility market</label>
+<select id="market"><option value="1HZ100V">Volatility 100 (1s)</option></select>
+<p id="status" class="wait">Starting connection...</p>
+<div class="small">Live price</div><div class="value" id="price">--</div>
+<div class="small">Last digit: <b id="lastDigit">--</b> · Live ticks: <b id="tickCount">0</b></div>
+<div class="row"><span>WebSocket</span><b id="socketState">Not started</b></div>
+<div class="row"><span>Market discovery</span><b id="marketState">Waiting</b></div>
+<div class="row"><span>History</span><b id="historyState">Waiting</b></div>
+<div class="row"><span>Live subscription</span><b id="streamState">Waiting</b></div>
+<div class="row"><span>History ticks loaded</span><b id="historyCount">0</b></div>
+<button id="reconnect">RECONNECT TO DERIV</button>
+</div>
+
+<div class="card">
+<h3>Analysis Settings</h3>
+<label for="window">History window</label>
+<select id="window"><option value="500">500 ticks</option><option value="1000">1,000 ticks</option><option value="2500">2,500 ticks</option><option value="5000" selected>5,000 ticks</option></select>
+<label for="lookback">Prediction lookback</label>
+<select id="lookback"><option value="50">50 ticks</option><option value="100" selected>100 ticks</option><option value="200">200 ticks</option><option value="300">300 ticks</option></select>
+<label for="minSample">Minimum holdout sample</label>
+<select id="minSample"><option value="200">200 outcomes</option><option value="300" selected>300 outcomes</option><option value="500">500 outcomes</option></select>
+<button id="analyse">RUN VALIDATION</button>
+</div>
+
+<div class="card">
+<h3>Signal Decision</h3><div class="value wait" id="decision">COLLECTING DATA</div>
+<p class="note" id="reason">Waiting for historical ticks and live updates.</p>
+<div class="row"><span>Holdout outcomes</span><b id="sampleCount">0</b></div>
+</div>
+
+<div class="card">
+<h3>Out-of-Sample Validation</h3>
+<p class="note">Chronological holdout test: the first 60% is observation data; later outcomes are scored using only preceding ticks. A pass requires the minimum sample and a 95% Wilson lower bound above the strategy's baseline. Historical performance does not guarantee future results.</p>
+<div class="row"><span>Matches (one digit)</span><b id="matchScore">--</b></div>
+<div class="row"><span>Differs (exclude one digit)</span><b id="differsScore">--</b></div>
+<div class="row"><span>Even / Odd</span><b id="parityScore">--</b></div>
+<div class="row"><span>Over / Under 5</span><b id="barrierScore">--</b></div>
+</div>
+
+<div class="card">
+<h3>Paper Test</h3>
+<label for="strategy">Strategy</label>
+<select id="strategy"><option value="match">Matches</option><option value="differs">Differs</option><option value="parity">Even / Odd</option><option value="barrier">Over / Under 5</option></select>
+<div class="value wait" id="prediction">NO SIGNAL</div>
+<p class="note" id="predictionInfo">Run validation first.</p>
+<button id="paper" disabled>ARM NEXT-TICK PAPER TEST</button>
+<p id="paperStatus" class="wait">Not armed.</p>
+<div class="row"><span>Paper wins</span><b id="wins">0</b></div>
+<div class="row"><span>Paper losses</span><b id="losses">0</b></div>
+<div class="row"><span>Paper win rate</span><b id="liveRate">--</b></div>
+</div>
+
+<div class="card">
+<h3>Connection Diagnostic Log</h3><div id="log" class="log">Waiting for connection events...</div>
+<button id="clearLog">CLEAR LOG</button>
+</div>
+
+<div class="card"><p class="note"><b>Important:</b> 80 wins out of 100 is a goal to measure, not a promise. No strategy can guarantee that result. This page only reads public market data and records paper-test outcomes; it does not request account access or place trades.</p></div>
+
+<script>
+"use strict";
+const WS_ENDPOINT="wss://api.derivws.com/trading/v1/options/ws/public";
+const MAX_HISTORY=5000;
+const $=id=>document.getElementById(id);
+let ws=null,reqId=0,symbol="1HZ100V",decimalPlaces=2,ticks=[],historyReady=false;
+let pending=null,wins=0,losses=0,validation=null,reconnectTimer=null,historyTimer=null,liveCount=0;
+function log(s){const el=$("log");const stamp=new Date().toLocaleTimeString();el.textContent=(stamp+"  "+s+"\n"+el.textContent).slice(0,9000)}
+function setStatus(s,kind="wait"){$("status").textContent=s;$("status").className=kind}
+function send(obj){if(ws&&ws.readyState===WebSocket.OPEN){ws.send(JSON.stringify(obj));log("SENT "+JSON.stringify(obj));return true}log("NOT SENT: socket is not open");return false}
+function digitFromQuote(q){const num=Number(q);if(!Number.isFinite(num))return null;const fixed=num.toFixed(decimalPlaces);return Number(fixed.charAt(fixed.length-1))}
+function countDigits(a){const c=Array(10).fill(0);for(const d of a)c[d]++;return c}
+function pick(a,k){const c=countDigits(a),even=c[0]+c[2]+c[4]+c[6]+c[8],over=c[6]+c[7]+c[8]+c[9],under=c[0]+c[1]+c[2]+c[3]+c[4];if(k==="match")return{choice:c.indexOf(Math.max(...c))};if(k==="differs")return{choice:c.indexOf(Math.min(...c))};if(k==="parity")return{choice:even>=a.length-even?"EVEN":"ODD"};return{choice:over>=under?"OVER":"UNDER"}}
+function score(k,p,d){if(k==="match")return{count:true,win:d===p.choice};if(k==="differs")return{count:true,win:d!==p.choice};if(k==="parity")return{count:true,win:(d%2===0)===(p.choice==="EVEN")};if(d===5)return{count:false};return{count:true,win:p.choice==="OVER"?d>5:d<5}}
+function baseline(k){return k==="match"?.1:k==="differs"?.9:.5}
+function wilson(w,n){if(!n)return 0;const z=1.96,p=w/n,z2=z*z;return(p+z2/(2*n)-z*Math.sqrt((p*(1-p)+z2/(4*n))/n))/(1+z2/n)}
+function validate(a,look,min){const out={};for(const k of ["match","differs","parity","barrier"])out[k]={w:0,n:0};const start=Math.max(look,Math.floor(a.length*.6));for(let i=start;i<a.length;i++){const past=a.slice(i-look,i);for(const k in out){const r=score(k,pick(past,k),a[i]);if(r.count){out[k].n++;if(r.win)out[k].w++}}}for(const k in out){const r=out[k];r.rate=r.n?r.w/r.n:0;r.lower=wilson(r.w,r.n);r.pass=r.n>=min&&r.lower>baseline(k)}return out}
+function render(){
+ const a=ticks.slice(-Number($("window").value)),look=Number($("lookback").value),min=Number($("minSample").value);
+ if(a.length<look+2){validation=null;$("decision").textContent="COLLECTING DATA";$("reason").textContent="Available digits: "+a.length+". Need more history."; $("sampleCount").textContent="0";signal();return}
+ validation=validate(a,look,min);const ids={match:"matchScore",differs:"differsScore",parity:"parityScore",barrier:"barrierScore"},passed=[];
+ for(const k in ids){const r=validation[k];$(ids[k]).textContent=(100*r.rate).toFixed(1)+"% ("+r.w+"/"+r.n+") · lower "+(100*r.lower).toFixed(1)+"% · "+(r.pass?"PASS":"NO PASS");$(ids[k]).className=r.pass?"good":"bad";if(r.pass)passed.push(k)}
+ $("sampleCount").textContent=validation.match.n;$("decision").textContent=passed.length?"VALIDATED CANDIDATE":"NO SIGNAL";$("decision").className="value "+(passed.length?"good":"wait");
+ $("reason").textContent=passed.length?"Passed historical screening: "+passed.join(", ")+". Future outcomes remain uncertain.":"No strategy passed the strict screening rules. No prediction will be forced.";signal()
+}
+function signal(){
+ const k=$("strategy").value,look=Number($("lookback").value);
+ if(!historyReady||ticks.length<look||!validation||!validation[k]||!validation[k].pass){$("prediction").textContent="NO SIGNAL";$("predictionInfo").textContent="History/live data is not ready or this strategy did not pass validation.";$("paper").disabled=true;return}
+ const p=pick(ticks.slice(-look),k),label=k==="match"?"MATCH "+p.choice:k==="differs"?"DIFFER "+p.choice:k==="parity"?p.choice:p.choice+" 5";
+ $("prediction").textContent=label;$("predictionInfo").textContent="Holdout "+(100*validation[k].rate).toFixed(1)+"%; Wilson lower bound "+(100*validation[k].lower).toFixed(1)+"%.";$("paper").disabled=!!pending
+}
+function requestHistory(n){$("historyState").textContent="Requested "+n;$("historyState").className="wait";log("Requesting "+n+" historical ticks for "+symbol);send({ticks_history:symbol,count:n,end:"latest",style:"ticks",req_id:++reqId})}
+function connect(){
+ if(reconnectTimer)clearTimeout(reconnectTimer);if(historyTimer)clearTimeout(historyTimer);
+ if(ws){try{ws.onclose=null;ws.close()}catch(e){}}
+ ticks=[];historyReady=false;pending=null;validation=null;liveCount=0;
+ $("tickCount").textContent="0";$("historyCount").textContent="0";$("price").textContent="--";$("lastDigit").textContent="--";
+ $("socketState").textContent="Connecting";$("marketState").textContent="Waiting";$("historyState").textContent="Waiting";$("streamState").textContent="Waiting";
+ $("paper").disabled=true;setStatus("Opening Deriv public connection...");log("Opening "+WS_ENDPOINT);
+ try{ws=new WebSocket(WS_ENDPOINT)}catch(e){setStatus("Could not create WebSocket: "+e.message,"bad");log("CONSTRUCTOR ERROR "+e.message);return}
+ ws.onopen=()=>{$("socketState").textContent="OPEN";$("socketState").className="good";setStatus("Connected. Requesting active markets...","good");$("marketState").textContent="Request sent";send({active_symbols:"brief",req_id:++reqId});
+ historyTimer=setTimeout(()=>{if(!historyReady&&ws&&ws.readyState===WebSocket.OPEN){$("historyState").textContent="No history response yet";setStatus("Connected, but history has not arrived. See diagnostic log.","wait");log("TIMEOUT: no history response after market discovery")}},15000)};
+ ws.onmessage=ev=>{
+  log("RECEIVED "+String(ev.data).slice(0,500));let d;try{d=JSON.parse(ev.data)}catch(e){log("JSON PARSE ERROR "+e.message);return}
+  if(d.error){const msg=d.error.message||"Unknown Deriv API error";setStatus("Deriv API error: "+msg,"bad");log("API ERROR "+JSON.stringify(d.error));return}
+  if(d.msg_type==="active_symbols"||Array.isArray(d.active_symbols)){
+   const arr=d.active_symbols||[];const market=arr.find(x=>x.underlying_symbol===symbol)||arr.find(x=>(x.display_name||"").toLowerCase().includes("volatility 100")&&(x.submarket||"").toLowerCase().includes("synthetic"));
+   $("marketState").textContent="Received "+arr.length+" symbols";
+   if(market){symbol=market.underlying_symbol||symbol;const ps=Number(market.pip_size);decimalPlaces=Number.isInteger(ps)&&ps>=0&&ps<=8?ps:2;$("market").value=symbol;log("Selected "+symbol+"; pip_size="+market.pip_size+"; decimals="+decimalPlaces)}
+   else{log("Requested market not found in active_symbols; using selected symbol "+symbol)}
+   setStatus("Market discovery response received. Requesting history and subscribing to ticks...","good");
+   requestHistory(1000);
+   send({ticks:symbol,subscribe:1,req_id:++reqId});
+   $("streamState").textContent="Subscription requested";
+   return;
+  }
+  if(d.msg_type==="history"||d.history){
+   const prices=d.history&&Array.isArray(d.history.prices)?d.history.prices:[];
+   if(prices.length){ticks=prices.map(digitFromQuote).filter(x=>x!==null);if(ticks.length>MAX_HISTORY)ticks=ticks.slice(-MAX_HISTORY);historyReady=true;$("historyCount").textContent=ticks.length;$("historyState").textContent="Loaded";$("historyState").className="good";if(historyTimer)clearTimeout(historyTimer);setStatus("History loaded. Waiting for live ticks...","good");render()}
+   else{$("historyState").textContent="Empty response";setStatus("History response contained no prices. Check log.","bad");log("HISTORY RESPONSE HAD NO PRICES")}
+   return;
+  }
+  if(d.msg_type==="tick"&&d.tick){
+   const q=Number(d.tick.quote),dg=digitFromQuote(q);if(dg===null){log("Ignored invalid quote "+d.tick.quote);return}
+   liveCount++;$("price").textContent=q.toFixed(decimalPlaces);$("lastDigit").textContent=dg;$("tickCount").textContent=liveCount;$("streamState").textContent="Receiving live ticks";$("streamState").className="good";
+   if(pending){const result=score(pending.kind,pending.prediction,dg);if(!result.count){$("paperStatus").textContent="PUSH — digit 5; not counted";$("paperStatus").className="wait"}else{if(result.win)wins++;else losses++;$("wins").textContent=wins;$("losses").textContent=losses;$("liveRate").textContent=(100*wins/(wins+losses)).toFixed(1)+"%";$("paperStatus").textContent=(result.win?"WIN":"LOSS")+" — "+pending.label+" — next digit "+dg;$("paperStatus").className=result.win?"good":"bad"}pending=null}
+   ticks.push(dg);if(ticks.length>MAX_HISTORY)ticks.shift();$("historyCount").textContent=ticks.length;if(ticks.length>Number($("lookback").value)+2){historyReady=true;render()}setStatus("Live market data is arriving: "+symbol,"good");return;
+  }
+ };
+ ws.onerror=()=>{$("socketState").textContent="ERROR";$("socketState").className="bad";$("streamState").textContent="Socket error";setStatus("WebSocket error. Check the diagnostic log.","bad");log("WEBSOCKET ERROR event")};
+ ws.onclose=e=>{$("socketState").textContent="CLOSED ("+e.code+")";$("socketState").className="bad";$("streamState").textContent="Disconnected";setStatus("Connection closed. Tap reconnect to try again.","bad");log("CLOSE code="+e.code+" reason="+(e.reason||"(none)"))};
+}
+$("reconnect").onclick=connect;
+$("clearLog").onclick=()=>$("log").textContent="Log cleared.";
+$("paper").onclick=()=>{const k=$("strategy").value,look=Number($("lookback").value);if(pending||!validation||!validation[k]||!validation[k].pass)return;const p=pick(ticks.slice(-look),k),label=k==="match"?"MATCH "+p.choice:k==="differs"?"DIFFER "+p.choice:k==="parity"?p.choice:p.choice+" 5";pending={kind:k,prediction:p,label};$("paperStatus").textContent="Armed for the next live tick: "+label;$("paperStatus").className="wait";$("paper").disabled=true};
+$("strategy").onchange=signal;$("window").onchange=render;$("lookback").onchange=render;$("minSample").onchange=render;$("analyse").onclick=render;
+$("market").onchange=()=>{symbol=$("market").value;connect()};
+connect();
+</script>
+</body></html>
