@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHACHA AI - DERIV ANALYSER</title>
+
+<style>
+*{box-sizing:border-box}
+body{
+  margin:0;padding:15px;background:#101827;color:white;
+  font-family:Arial,sans-serif
+}
+.container{max-width:650px;margin:auto}
+h1{color:#00e5a0;text-align:center;font-size:24px}
+h2{font-size:18px;color:#00e5a0}
+.card{
+  background:#1b293d;padding:15px;border-radius:12px;
+  margin:12px 0
+}
+label{display:block;margin:12px 0 6px}
+select,button{
+  width:100%;padding:13px;border:0;border-radius:7px;
+  font-size:15px;margin:5px 0
+}
+select{background:#263951;color:white}
+button{background:#00c991;color:#071b19;font-weight:bold}
+button:disabled{opacity:.5}
+.status{color:#ffca58;font-weight:bold}
+.grid{
+  display:grid;grid-template-columns:repeat(5,1fr);gap:7px
+}
+.digit{
+  background:#263951;text-align:center;padding:10px 2px;
+  border-radius:7px;font-size:17px
+}
+.digit b{display:block;font-size:20px;color:#00e5a0}
+.hot{border:2px solid #00e5a0}
+.cold{border:2px solid #ff6464}
+.big{font-size:25px;color:#00e5a0;font-weight:bold}
+.small{font-size:12px;color:#b8c6d9}
+.good{color:#00e5a0}
+.bad{color:#ff7777}
+.history{
+  word-break:break-all;line-height:2;
+  font-size:17px
+}
+.notice{font-size:12px;color:#ffcf75;line-height:1.5}
+</style>
+</head>
+
+<body>
+<div class="container">
+
+<h1>CHACHA AI SIGNALS PRO</h1>
+<p style="text-align:center">DERIV DIGIT ANALYSER</p>
+
+<div class="card">
+<h2>Live Market Connection</h2>
+<div id="status" class="status">Not connected</div>
+
+<button onclick="connectDeriv()">CONNECT TO DERIV</button>
+
+<label>Select Volatility Index</label>
+<select id="symbol">
+<option value="">Connect to load markets</option>
+</select>
+
+<label>Tick History</label>
+<select id="count">
+<option value="100">Last 100 ticks</option>
+<option value="500">Last 500 ticks</option>
+<option value="1000" selected>Last 1000 ticks</option>
+</select>
+
+<button onclick="loadMarket()">LOAD MARKET DATA</button>
+</div>
+
+<div class="card">
+<h2>Live Market Price</h2>
+<div id="price" class="big">---</div>
+<p>Last digit: <span id="lastDigit" class="big">-</span></p>
+<p>Received ticks: <span id="received">0</span></p>
+</div>
+
+<div class="card">
+<h2>Digit Frequency</h2>
+<div class="grid" id="frequencies"></div>
+<p>Hot digit: <span id="hot">-</span></p>
+<p>Cold digit: <span id="cold">-</span></p>
+</div>
+
+<div class="card">
+<h2>Contract Analysis</h2>
+
+<label>Contract Type</label>
+<select id="contract">
+<option value="matches">Matches</option>
+<option value="differs">Differs</option>
+<option value="even">Even</option>
+<option value="odd">Odd</option>
+<option value="over">Over</option>
+<option value="under">Under</option>
+</select>
+
+<label>Prediction Barrier / Digit</label>
+<select id="barrier">
+<option value="0">0</option>
+<option value="1">1</option>
+<option value="2">2</option>
+<option value="3">3</option>
+<option value="4">4</option>
+<option value="5" selected>5</option>
+<option value="6">6</option>
+<option value="7">7</option>
+<option value="8">8</option>
+<option value="9">9</option>
+</select>
+
+<button onclick="analyse()">ANALYSE DIGITS</button>
+
+<div id="analysis">
+Waiting for market data...
+</div>
+</div>
+
+<div class="card">
+<h2>Recent Digit History</h2>
+<div id="history" class="history">No data yet</div>
+</div>
+
+<div class="card">
+<h2>Performance Tracker</h2>
+<p>Wins: <span id="wins">0</span></p>
+<p>Losses: <span id="losses">0</span></p>
+<p>Recorded results: <span id="total">0</span></p>
+<button onclick="recordResult('WIN')">RECORD WIN</button>
+<button onclick="recordResult('LOSS')" style="background:#e45b66;color:white">RECORD LOSS</button>
+<button onclick="resetResults()" style="background:#53647a;color:white">RESET RESULTS</button>
+</div>
+
+<div class="card notice">
+<b>Important:</b> This application analyses historical and live market
+digits. Historical frequency does not guarantee the next outcome.
+The analysis is experimental, not a guaranteed trading signal.
+No trades are automatically placed.
+</div>
+
+</div>
+
+<script>
+const WS_URL =
+"wss://api.derivws.com/trading/v1/options/ws/public";
+
+let ws = null;
+let digits = [];
+let precision = 2;
+let tickCount = 0;
+let subscriptionId = null;
+let requestNumber = 10;
+let connected = false;
+
+function setStatus(message){
+ document.getElementById("status").textContent=message;
+}
+
+function send(data){
+ if(ws && ws.readyState===WebSocket.OPEN){
+   ws.send(JSON.stringify(data));
+ }
+}
+
+function connectDeriv(){
+ if(ws && ws.readyState===WebSocket.OPEN){
+   setStatus("Already connected");
+   return;
+ }
+
+ setStatus("Connecting to Deriv...");
+
+ ws = new WebSocket(WS_URL);
+
+ ws.onopen=()=>{
+   connected=true;
+   setStatus("Connected. Loading markets...");
+   send({active_symbols:"brief",req_id:1});
+ };
+
+ ws.onmessage=(event)=>{
+   const data=JSON.parse(event.data);
+
+   if(data.error){
+     setStatus("API error: "+data.error.message);
+     return;
+   }
+
+   if(data.msg_type==="active_symbols"){
+     const markets=(data.active_symbols||[]).filter(s=>{
+       const name=(s.display_name||"").toLowerCase();
+       return name.includes("volatility") ||
+         /^(R_\d+|1HZ\d+V)$/i.test(s.symbol||"");
+     });
+
+     const select=document.getElementById("symbol");
+     select.innerHTML="";
+
+     markets.sort((a,b)=>
+       a.display_name.localeCompare(b.display_name)
+     );
+
+     markets.forEach(m=>{
+       const option=document.createElement("option");
+       option.value=m.symbol;
+       option.textContent=m.display_name+" ("+m.symbol+")";
+       select.appendChild(option);
+     });
+
+     if(markets.length){
+       setStatus(markets.length+" Volatility markets loaded");
+       loadMarket();
+     }else{
+       setStatus("No Volatility markets returned by Deriv");
+     }
+   }
+
+   if(data.msg_type==="history"){
+     if(data.history && data.history.prices){
+       precision=Number(data.pip_size ?? precision);
+       digits=data.history.prices.map(p=>getDigit(p));
+       tickCount=0;
+       updateDisplay();
+       setStatus("Historical data loaded. Live tracking active.");
+     }
+   }
+
+   if(data.msg_type==="tick"){
+     const tick=data.tick;
+     if(!tick)return;
+
+     precision=Number(tick.pip_size ?? precision);
+
+     document.getElementById("price").textContent=
+       Number(tick.quote).toFixed(precision);
+
+     const digit=getDigit(tick.quote);
+     document.getElementById("lastDigit").textContent=digit;
+
+     digits.push(digit);
+     if(digits.length>1000)digits.shift();
+
+     tickCount++;
+     document.getElementById("received").textContent=tickCount;
+
+     updateDisplay();
+   }
+ };
+
+ ws.onerror=()=>{
+   setStatus("Connection error. Please try again.");
+ };
+
+ ws.onclose=()=>{
+   connected=false;
+   setStatus("Disconnected. Reconnect to continue.");
+ };
+}
+
+function getDigit(price){
+ const formatted=Number(price).toFixed(precision);
+ return Number(formatted.slice(-1));
+}
+
+function loadMarket(){
+ if(!connected){
+   setStatus("Connect to Deriv first");
+   return;
+ }
+
+ const symbol=document.getElementById("symbol").value;
+ if(!symbol)return;
+
+ if(subscriptionId){
+   send({forget:subscriptionId});
+   subscriptionId=null;
+ }
+
+ digits=[];
+ tickCount=0;
+ document.getElementById("received").textContent="0";
+
+ const count=Number(document.getElementById("count").value);
+
+ send({
+   ticks_history:symbol,
+   count:count,
+   end:"latest",
+   style:"ticks",
+   req_id:requestNumber++
+ });
+
+ send({
+   ticks:symbol,
+   subscribe:1,
+   req_id:requestNumber++
+ });
+
+ setStatus("Requesting "+count+" historical ticks...");
+}
+
+function updateDisplay(){
+ const counts=Array(10).fill(0);
+
+ digits.forEach(d=>counts[d]++);
+
+ const total=digits.length;
+ const box=document.getElementById("frequencies");
+ box.innerHTML="";
+
+ const max=Math.max(...counts);
+ const min=Math.min(...counts);
+
+ counts.forEach((n,d)=>{
+   const percent=total?(n/total*100).toFixed(1):"0.0";
+   const div=document.createElement("div");
+
+   div.className="digit";
+   if(n===max && total)div.classList.add("hot");
+   if(n===min && total)div.classList.add("cold");
+
+   div.innerHTML="<b>"+d+"</b>"+percent+"%<br>"+
+     "<span class='small'>"+n+"</span>";
+
+   box.appendChild(div);
+ });
+
+ const maxDigits=counts
+   .map((n,d)=>({n,d}))
+   .filter(x=>x.n===max)
+   .map(x=>x.d);
+
+ const minDigits=counts
+   .map((n,d)=>({n,d}))
+   .filter(x=>x.n===min)
+   .map(x=>x.d);
+
+ document.getElementById("hot").textContent=
+   total?maxDigits.join(", "):"-";
+
+ document.getElementById("cold").textContent=
+   total?minDigits.join(", "):"-";
+
+ document.getElementById("history").textContent=
+   digits.slice(-50).join("  ");
+
+}
+
+function analyse(){
+ if(digits.length<100){
+   document.getElementById("analysis").textContent=
+     "At least 100 ticks are needed.";
+   return;
+ }
+
+ const type=document.getElementById("contract").value;
+ const barrier=Number(document.getElementById("barrier").value);
+
+ let wins=0;
+
+ digits.forEach(d=>{
+   let hit=false;
+
+   if(type==="matches")hit=d===barrier;
+   if(type==="differs")hit=d!==barrier;
+   if(type==="even")hit=d%2===0;
+   if(type==="odd")hit=d%2!==0;
+   if(type==="over")hit=d>barrier;
+   if(type==="under")hit=d<barrier;
+
+   if(hit)wins++;
+ });
+
+ const rate=(wins/digits.length*100).toFixed(2);
+
+ let baseline="";
+
+ if(type==="matches")baseline="10%";
+ if(type==="differs")baseline="90%";
+ if(type==="even" || type==="odd")baseline="50%";
+ if(type==="over")baseline=((9-barrier)/10*100).toFixed(0)+"%";
+ if(type==="under")baseline=(barrier/10*100).toFixed(0)+"%";
+
+ document.getElementById("analysis").innerHTML=
+   "<p>Contract: <b>"+type.toUpperCase()+"</b></p>"+
+   "<p>Historical sample: <b>"+digits.length+"</b> ticks</p>"+
+   "<p>Historical hit frequency: <b>"+rate+"%</b></p>"+
+   "<p>Equal-digit reference rate: <b>"+baseline+"</b></p>"+
+   "<p class='notice'>This is a historical frequency, not a forecast. "+
+   "It does not prove an advantage on the next tick.</p>";
+}
+
+function getResults(){
+ return JSON.parse(localStorage.getItem("chachaResults")||
+   '{"wins":0,"losses":0}');
+}
+
+function showResults(){
+ const r=getResults();
+ document.getElementById("wins").textContent=r.wins;
+ document.getElementById("losses").textContent=r.losses;
+ document.getElementById("total").textContent=
+   r.wins+r.losses;
+}
+
+function recordResult(result){
+ const r=getResults();
+ if(result==="WIN")r.wins++;
+ else r.losses++;
+
+ localStorage.setItem("chachaResults",JSON.stringify(r));
+ showResults();
+}
+
+function resetResults(){
+ if(!confirm("Reset all recorded results?"))return;
+ localStorage.removeItem("chachaResults");
+ showResults();
+}
+
+showResults();
+</script>
+</body>
+  </html>
