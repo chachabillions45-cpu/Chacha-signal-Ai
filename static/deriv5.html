@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CHACHA AI LIVE DIGIT ANALYSER</title>
+<style>
+body{background:#101827;color:white;font-family:Arial;padding:14px;margin:0}
+h2{text-align:center;color:#00e5a0}
+.box{background:#1d293b;padding:14px;border-radius:12px;margin:12px 0}
+button,select{width:100%;padding:13px;border:0;border-radius:8px;margin-top:10px}
+button{background:#00c98b;font-weight:bold}
+select{background:white;color:#111}
+#status{color:#ffd166;margin:10px 0}
+.price{font-size:25px;color:#00e5a0;font-weight:bold}
+.grid{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
+.digit{background:#26364d;padding:10px 3px;text-align:center;border-radius:8px}
+.digit b{display:block;font-size:20px;color:#00e5a0}
+.bar{height:5px;background:#00c98b;margin-top:5px}
+.small{font-size:12px;color:#bdc9d8}
+</style>
+</head>
+<body>
+
+<h2>CHACHA AI LIVE DIGIT ANALYSER</h2>
+
+<div class="box">
+<div id="status">Not connected</div>
+<button onclick="connect()">CONNECT TO DERIV</button>
+
+<select id="market" onchange="changeMarket()">
+<option value="1HZ100V">Volatility 100 (1s)</option>
+</select>
+
+<div class="small">LIVE PRICE</div>
+<div class="price" id="price">---</div>
+<div>Last digit: <b id="lastDigit">---</b></div>
+<div class="small" id="tickCount">Ticks collected: 0</div>
+</div>
+
+<div class="box">
+<h3>DIGIT FREQUENCY</h3>
+<div class="grid" id="digits"></div>
+</div>
+
+<div class="box">
+<h3>ANALYSIS WINDOW</h3>
+<select id="window" onchange="render()">
+<option value="100">Last 100 ticks</option>
+<option value="500">Last 500 ticks</option>
+<option value="1000">Last 1,000 ticks</option>
+</select>
+<p id="summary">Waiting for live ticks...</p>
+<p id="hot"></p>
+<p id="cold"></p>
+</div>
+
+<div class="box">
+<h3>MARKET OBSERVATION</h3>
+<p id="observation">Waiting for data.</p>
+<p class="small">
+Past digit frequency is not a guarantee of the next outcome.
+</p>
+</div>
+
+<script>
+let ws=null;
+let symbols=[];
+let ticks=[];
+let decimals=2;
+let currentSymbol="1HZ100V";
+let connectionNumber=0;
+let historyPending=false;
+let pendingLive=[];
+
+function status(message){
+ document.getElementById("status").textContent=message;
+}
+
+function getDecimals(pip){
+ let value=String(pip);
+ return value.includes(".")?
+ value.split(".")[1].length:0;
+}
+
+function connect(target){
+ if(target){
+  currentSymbol=target;
+ }
+
+ connectionNumber++;
+ const id=connectionNumber;
+
+ if(ws){
+  ws.close();
+ }
+
+ ticks=[];
+ pendingLive=[];
+ historyPending=false;
+ render();
+
+ document.getElementById("price").textContent="---";
+ document.getElementById("lastDigit").textContent="---";
+
+ status("Connecting to Deriv...");
+
+ ws=new WebSocket(
+  "wss://api.derivws.com/trading/v1/options/ws/public"
+ );
+
+ ws.onopen=function(){
+  if(id!==connectionNumber)return;
+
+  status("Connected. Loading markets...");
+
+  ws.send(JSON.stringify({
+   active_symbols:"full",
+   req_id:1
+  }));
+ };
+
+ ws.onmessage=function(event){
+  if(id!==connectionNumber)return;
+
+  let data;
+
+  try{
+   data=JSON.parse(event.data);
+  }catch(e){
+   return;
+  }
+
+  if(data.error){
+   status("Deriv error: "+data.error.message);
+   historyPending=false;
+   return;
+  }
+
+  if(data.msg_type==="active_symbols"){
+   symbols=(data.active_symbols||[]).filter(function(m){
+    return m.market==="synthetic_index" &&
+    (m.underlying_symbol_name||"")
+    .toLowerCase().includes("volatility");
+   });
+
+   let select=document.getElementById("market");
+   select.innerHTML="";
+
+   symbols.forEach(function(m){
+    let option=document.createElement("option");
+    option.value=m.underlying_symbol;
+    option.textContent=m.underlying_symbol_name;
+    select.appendChild(option);
+   });
+
+   let found=symbols.find(function(m){
+    return m.underlying_symbol===currentSymbol;
+   });
+
+   if(!found && symbols.length){
+    currentSymbol=symbols[0].underlying_symbol;
+   }
+
+   if(symbols.length){
+    select.value=currentSymbol;
+    startMarket(id);
+   }else{
+    status("No Volatility markets found.");
+   }
+  }
+
+  if(data.msg_type==="history"){
+   if(id!==connectionNumber)return;
+
+   ticks=[];
+   const prices=data.history&&data.history.prices||[];
+   const times=data.history&&data.history.times||[];
+
+   prices.forEach(function(price,i){
+    addTick(price,times[i]);
+   });
+
+   historyPending=false;
+
+   pendingLive.forEach(function(t){
+    addTick(t.price,t.time);
+   });
+
+   pendingLive=[];
+   render();
+
+   status("Live analysis running: "+currentSymbol);
+  }
+
+  if(data.msg_type==="tick"){
+   if(!data.tick)return;
+
+   let live={
+    price:data.tick.quote,
+    time:data.tick.epoch
+   };
+
+   if(historyPending){
+    pendingLive.push(live);
+   }else{
+    addTick(live.price,live.time);
+    render();
+   }
+  }
+ };
+
+ ws.onerror=function(){
+  if(id===connectionNumber){
+   status("Connection error. Check your internet.");
+  }
+ };
+
+ ws.onclose=function(){
+  if(id===connectionNumber){
+   status("Connection closed. Reconnect if needed.");
+  }
+ };
+}
+
+function startMarket(id){
+ if(!ws || ws.readyState!==WebSocket.OPEN)return;
+ if(id!==connectionNumber)return;
+
+ let market=symbols.find(function(m){
+  return m.underlying_symbol===currentSymbol;
+ });
+
+ if(!market)return;
+
+ decimals=getDecimals(market.pip_size);
+
+ ticks=[];
+ pendingLive=[];
+ historyPending=true;
+
+ document.getElementById("price").textContent="---";
+ document.getElementById("lastDigit").textContent="---";
+
+ status("Loading "+market.underlying_symbol_name+" history...");
+
+ ws.send(JSON.stringify({
+  ticks_history:currentSymbol,
+  count:1000,
+  end:"latest",
+  style:"ticks",
+  req_id:2
+ }));
+
+ ws.send(JSON.stringify({
+  ticks:currentSymbol,
+  subscribe:1,
+  req_id:3
+ }));
+}
+
+function changeMarket(){
+ let selected=document.getElementById("market").value;
+
+ if(selected){
+  currentSymbol=selected;
+  connect(selected);
+ }
+}
+
+function addTick(price,time){
+ let formatted=Number(price).toFixed(decimals);
+
+ let digit=Number(formatted.slice(-1));
+
+ ticks.push({
+  price:formatted,
+  digit:digit,
+  time:time||Date.now()
+ });
+
+ if(ticks.length>1000){
+  ticks.shift();
+ }
+
+ document.getElementById("price").textContent=formatted;
+ document.getElementById("lastDigit").textContent=digit;
+}
+
+function render(){
+ let limit=Number(document.getElementById("window").value);
+ let sample=ticks.slice(-limit);
+
+ document.getElementById("tickCount").textContent=
+ "Ticks collected: "+ticks.length;
+
+ let counts=Array(10).fill(0);
+
+ sample.forEach(function(t){
+  counts[t.digit]++;
+ });
+
+ let total=sample.length;
+ let area=document.getElementById("digits");
+ area.innerHTML="";
+
+ counts.forEach(function(number,digit){
+  let percent=total?number/total*100:0;
+
+  let box=document.createElement("div");
+  box.className="digit";
+
+  box.innerHTML=
+   digit+
+   "<b>"+number+"</b>"+
+   percent.toFixed(1)+"%"+
+   '<div class="bar" style="width:'+percent+'%"></div>';
+
+  area.appendChild(box);
+ });
+
+ document.getElementById("summary").textContent=
+ "Analysing "+total+" ticks. Selected window: "+limit+".";
+
+ if(total===0){
+  document.getElementById("hot").textContent="";
+  document.getElementById("cold").textContent="";
+  document.getElementById("observation").textContent=
+  "Waiting for tick data.";
+  return;
+ }
+
+ let ranked=counts.map(function(number,digit){
+  return {digit:digit,count:number};
+ });
+
+ ranked.sort(function(a,b){
+  return b.count-a.count;
+ });
+
+ document.getElementById("hot").textContent=
+ "Most frequent: "+ranked.slice(0,3)
+ .map(x=>x.digit+" ("+x.count+")").join(", ");
+
+ document.getElementById("cold").textContent=
+ "Least frequent: "+ranked.slice(-3)
+ .map(x=>x.digit+" ("+x.count+")").join(", ");
+
+ document.getElementById("observation").textContent=
+ "Frequency analysis is based on historical ticks. It does not establish a reliable prediction of the next digit.";
+}
+
+render();
+</script>
+
+</body>
+  </html>
