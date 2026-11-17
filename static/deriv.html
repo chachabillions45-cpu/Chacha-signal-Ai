@@ -183,7 +183,7 @@ function connectDeriv(){
  ws.onopen=()=>{
    connected=true;
    setStatus("Connected. Loading markets...");
-   send({active_symbols:"brief",req_id:1});
+send({active_symbols:"full",req_id:1});
  };
 
  ws.onmessage=(event)=>{
