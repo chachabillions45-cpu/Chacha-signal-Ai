@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHACHA DERIV AI ANALYSER</title>
+
+<style>
+body {
+  background:#101827;
+  color:white;
+  font-family:Arial,sans-serif;
+  padding:15px;
+  margin:0;
+}
+.box {
+  background:#1d293b;
+  padding:15px;
+  border-radius:12px;
+  margin-bottom:14px;
+}
+h2 {color:#00e5a0;text-align:center}
+button,select,input {
+  width:100%;
+  padding:13px;
+  margin:7px 0;
+  border:0;
+  border-radius:7px;
+  font-size:16px;
+}
+button {
+  background:#00c98b;
+  color:#071b16;
+  font-weight:bold;
+}
+.value {
+  font-size:25px;
+  color:#00e5a0;
+  text-align:center;
+}
+.grid {
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  gap:6px;
+}
+.digit {
+  background:#29394f;
+  padding:10px 2px;
+  border-radius:7px;
+  text-align:center;
+}
+.small {font-size:12px;color:#bdc9d8}
+#status {color:#ffd166;text-align:center}
+</style>
+</head>
+
+<body>
+
+<h2>CHACHA DERIV AI ANALYSER</h2>
+
+<div class="box">
+  <div id="status">Not connected</div>
+  <button onclick="connectDeriv()">CONNECT TO DERIV</button>
+  <label>Select Volatility Index</label>
+  <select id="symbol"></select>
+  <button onclick="loadMarket()">ANALYSE MARKET</button>
+</div>
+
+<div class="box">
+  <div class="small">LIVE PRICE</div>
+  <div class="value" id="price">---</div>
+  <div class="small">LAST DIGIT</div>
+  <div class="value" id="lastDigit">---</div>
+  <div class="small" id="tickCount">Ticks received: 0</div>
+</div>
+
+<div class="box">
+  <h3>DIGIT FREQUENCY</h3>
+  <select id="historySize" onchange="loadMarket()">
+    <option value="100">Last 100 ticks</option>
+    <option value="500">Last 500 ticks</option>
+    <option value="1000">Last 1000 ticks</option>
+  </select>
+  <div class="grid" id="digits"></div>
+</div>
+
+<div class="box">
+  <h3>CONTRACT ANALYSIS</h3>
+  <label>Choose contract</label>
+  <select id="contract">
+    <option value="matches">Matches</option>
+    <option value="differs">Differs</option>
+    <option value="even">Even</option>
+    <option value="odd">Odd</option>
+    <option value="over">Over</option>
+    <option value="under">Under</option>
+  </select>
+
+  <label>Barrier digit (0–9)</label>
+  <input id="barrier" type="number" min="0" max="9" value="5">
+
+  <div id="analysis">Waiting for market data...</div>
+</div>
+
+<div class="box">
+  <h3>RECENT DIGITS</h3>
+  <div id="recent">No ticks yet</div>
+</div>
+
+<p class="small">
+This tool analyses historical and live market data.
+Frequency percentages describe past observations, not guaranteed
+future outcomes. Always verify results before trading.
+</p>
+
+<script>
+let ws = null;
+let historyDigits = [];
+let currentSymbol = "";
+let decimalPlaces = 2;
+let totalTicks = 0;
+
+const endpoint =
+"wss://api.derivws.com/trading/v1/options/ws/public";
+
+function status(message) {
+  document.getElementById("status").textContent = message;
+}
+
+function send(data) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(data));
+  }
+}
+
+function connectDeriv() {
+  if (ws) ws.close();
+
+  status("Connecting to Deriv...");
+
+  ws = new WebSocket(endpoint);
+
+  ws.onopen = function() {
+    status("Connected. Loading markets...");
+    send({
+      active_symbols:"brief",
+      req_id:1
+    });
+  };
+
+  ws.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+
+    if (data.error) {
+      status("Deriv error: " + data.error.message);
+      return;
+    }
+
+    if (data.msg_type === "active_symbols") {
+      const markets = (data.active_symbols || []).filter(s => {
+        const symbol = s.symbol || "";
+        const name = s.display_name || "";
+
+        return /^R_\\d+$/i.test(symbol) ||
+               /^1HZ\\d+V$/i.test(symbol) ||
+               name.toLowerCase().includes("volatility");
+      });
+
+      const select = document.getElementById("symbol");
+      select.innerHTML = "";
+
+      markets.sort((a,b) =>
+        (a.display_name || a.symbol)
+        .localeCompare(b.display_name || b.symbol)
+      );
+
+      markets.forEach(m => {
+        const option = document.createElement("option");
+        option.value = m.symbol;
+        option.textContent =
+          (m.display_name || m.symbol) + " (" + m.symbol + ")";
+        select.appendChild(option);
+      });
+
+      if (markets.length > 0) {
+        status(markets.length + " Volatility markets loaded");
+        loadMarket();
+      } else {
+        status("No Volatility markets found. Check connection.");
+      }
+    }
+
+    if (data.msg_type === "history") {
+      const prices = data.history?.prices || [];
+      const pip = Number(data.pip_size);
+
+      if (Number.isInteger(pip) && pip >= 0 && pip <= 10) {
+        decimalPlaces = pip;
+      }
+
+      historyDigits = prices.map(p => getDigit(p));
+      updateDisplay();
+    }
+
+    if (data.msg_type === "tick") {
+      const tick = data.tick;
+      if (!tick) return;
+
+      if (Number.isInteger(Number(tick.pip_size))) {
+        decimalPlaces = Number(tick.pip_size);
+      }
+
+      document.getElementById("price").textContent =
+        Number(tick.quote).toFixed(decimalPlaces);
+
+      const digit = getDigit(tick.quote);
+      document.getElementById("lastDigit").textContent = digit;
+
+      historyDigits.push(digit);
+      totalTicks++;
+
+      const max = Number(
+        document.getElementById("historySize").value
+      );
+
+      if (historyDigits.length > max) {
+        historyDigits.shift();
+      }
+
+      document.getElementById("tickCount").textContent =
+        "Ticks received: " + totalTicks;
+
+      updateDisplay();
+    }
+  };
+
+  ws.onerror = function() {
+    status("Connection error. Please try again.");
+  };
+
+  ws.onclose = function() {
+    status("Disconnected");
+  };
+}
+
+function getDigit(price) {
+  const formatted = Number(price).toFixed(decimalPlaces);
+  return Number(formatted.slice(-1));
+}
+
+function loadMarket() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    status("Connect to Deriv first");
+    return;
+  }
+
+  const symbol = document.getElementById("symbol").value;
+  if (!symbol) return;
+
+  currentSymbol = symbol;
+  historyDigits = [];
+  totalTicks = 0;
+
+  document.getElementById("price").textContent = "---";
+  document.getElementById("lastDigit").textContent = "---";
+
+  send({
+    ticks_history:symbol,
+    count:Number(document.getElementById("historySize").value),
+    end:"latest",
+    style:"ticks",
+    req_id:2
+  });
+
+  send({
+    ticks:symbol,
+    subscribe:1,
+    req_id:3
+  });
+
+  status("Loading " + symbol + "...");
+}
+
+function updateDisplay() {
+  const counts = Array(10).fill(0);
+
+  historyDigits.forEach(d => counts[d]++);
+
+  const total = historyDigits.length;
+
+  document.getElementById("digits").innerHTML =
+    counts.map((count,d) => {
+      const percent = total
+        ? (count / total * 100).toFixed(1)
+        : "0.0";
+
+      return `<div class="digit">
+        <b>${d}</b><br>
+        ${count}<br>
+        <span class="small">${percent}%</span>
+      </div>`;
+    }).join("");
+
+  document.getElementById("recent").textContent =
+    historyDigits.slice(-30).reverse().join("  ");
+
+  analyseContract(counts,total);
+}
+
+function analyseContract(counts,total) {
+  const type = document.getElementById("contract").value;
+  const barrier = Number(document.getElementById("barrier").value);
+
+  if (!total) {
+    document.getElementById("analysis").textContent =
+      "Waiting for data...";
+    return;
+  }
+
+  let hits = 0;
+
+  for (let d=0; d<=9; d++) {
+    if (type === "matches" && d === barrier) hits += counts[d];
+    if (type === "differs" && d !== barrier) hits += counts[d];
+    if (type === "even" && d % 2 === 0) hits += counts[d];
+    if (type === "odd" && d % 2 !== 0) hits += counts[d];
+    if (type === "over" && d > barrier) hits += counts[d];
+    if (type === "under" && d < barrier) hits += counts[d];
+  }
+
+  const percentage = (hits / total * 100).toFixed(1);
+
+  document.getElementById("analysis").innerHTML =
+    "Observed historical frequency: <b>" +
+    percentage + "%</b><br>" +
+    "Occurrences: " + hits + " out of " + total +
+    "<br><span class='small'>This is historical frequency, not a prediction.</span>";
+}
+
+document.getElementById("contract").addEventListener(
+  "change", updateDisplay
+);
+
+document.getElementById("barrier").addEventListener(
+  "input", updateDisplay
+);
+</script>
+
+</body>
+  </html>
