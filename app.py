@@ -22,10 +22,11 @@ def candles():
 
     try:
         response = requests.get(
-            "https://api.otcharts.com/v1/candles",
-            params={
-                "venue": "otc",
-                "symbol": symbol,
+    "https://otcharts.com/v1/candles",
+    params={
+        "venue": "otc",
+        "symbol": symbol,
+
                 "tf": 60,
                 "limit": 100
             },
