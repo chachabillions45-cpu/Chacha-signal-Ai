@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHACHA AI ADVANCED ENGINE</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:14px;background:#101827;color:white;font-family:Arial}
+h2{text-align:center;color:#38e8b5}
+.card{background:#1b293b;border:1px solid #30435b;border-radius:12px;padding:15px;margin:12px 0}
+label{display:block;color:#aab7c8;font-size:13px;margin:12px 0 6px}
+select,button{width:100%;padding:13px;border-radius:8px;border:1px solid #40546e;background:#101827;color:white;font-size:15px}
+button{background:#087f68;border:0;font-weight:bold;margin-top:12px}
+.value{font-size:23px;font-weight:bold;color:#38e8b5;margin:7px 0}
+.small{font-size:12px;color:#aab7c8}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.row{display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid #30435b;font-size:13px}
+.good{color:#38e8b5}
+.bad{color:#ff7272}
+.wait{color:#ffc65c}
+.note{font-size:12px;line-height:1.6;color:#aab7c8}
+hr{border:0;border-top:1px solid #30435b;margin:14px 0}
+</style>
+</head>
+<body>
+
+<h2>CHACHA AI ADVANCED ENGINE</h2>
+<p class="small" style="text-align:center">SELECTED MARKET INTELLIGENCE</p>
+
+<div class="card">
+<h3>Live Market</h3>
+<label>Select your market</label>
+<select id="market">
+<option value="1HZ100V">Volatility 100 (1s)</option>
+</select>
+<p id="status" class="wait">Connecting...</p>
+<div class="small">Live price</div>
+<div class="value" id="price">--</div>
+<div class="small">Last digit: <b id="lastDigit">--</b></div>
+<div class="small">Ticks collected: <b id="tickCount">0</b></div>
+</div>
+
+<div class="card">
+<h3>Analysis Settings</h3>
+<label>Backtest history</label>
+<select id="window">
+<option value="100">Last 100 ticks</option>
+<option value="500">Last 500 ticks</option>
+<option value="1000" selected>Last 1000 ticks</option>
+</select>
+<label>Prediction lookback</label>
+<select id="lookback">
+<option value="50">Previous 50 ticks</option>
+<option value="100" selected>Previous 100 ticks</option>
+<option value="200">Previous 200 ticks</option>
+</select>
+<button id="analyse">RUN ANALYSIS</button>
+</div>
+
+<div class="card">
+<h3>Market Intelligence</h3>
+<div class="grid">
+<div>
+<div class="small">Most frequent digit</div>
+<div class="value" id="hot">--</div>
+</div>
+<div>
+<div class="small">Least frequent digit</div>
+<div class="value" id="cold">--</div>
+</div>
+<div>
+<div class="small">Even frequency</div>
+<div class="value" id="even">--</div>
+</div>
+<div>
+<div class="small">Odd frequency</div>
+<div class="value" id="odd">--</div>
+</div>
+</div>
+<hr>
+<div class="small">Current market assessment</div>
+<div class="value wait" id="assessment">COLLECTING DATA</div>
+<p class="note" id="assessmentReason">Waiting for sufficient market history.</p>
+</div>
+
+<div class="card">
+<h3>Strategy Backtesting</h3>
+<p class="note">
+Each prediction uses earlier ticks only. The next historical tick is
+then checked to record a win or loss. At least 100 previous ticks are
+required before testing a prediction.
+</p>
+
+<div class="row">
+<span>Matches: most frequent digit</span>
+<b id="matchResult">--</b>
+</div>
+<div class="row">
+<span>Even / Odd: historical majority</span>
+<b id="parityResult">--</b>
+</div>
+<div class="row">
+<span>Over / Under 5: historical majority</span>
+<b id="barrierResult">--</b>
+</div>
+
+<hr>
+<div class="grid">
+<div>
+<div class="small">Predictions tested</div>
+<div class="value" id="tested">0</div>
+</div>
+<div>
+<div class="small">Total wins</div>
+<div class="value good" id="totalWins">0</div>
+</div>
+<div>
+<div class="small">Total losses</div>
+<div class="value bad" id="totalLosses">0</div>
+</div>
+<div>
+<div class="small">Combined accuracy</div>
+<div class="value" id="accuracy">--</div>
+</div>
+</div>
+<button id="reset">RESET DISPLAYED RESULTS</button>
+</div>
+
+<div class="card">
+<h3>Live Next-Tick Paper Test</h3>
+<p class="note">The engine chooses a prediction using recent history, then checks the next live tick. No real trade is placed.</p>
+<div class="small">Current prediction</div>
+<div class="value wait" id="prediction">WAIT</div>
+<p class="note" id="predictionInfo">Waiting for enough ticks.</p>
+<button id="paper">TEST NEXT LIVE TICK</button>
+<p id="paperStatus" class="wait">Ready.</p>
+<div class="grid">
+<div>
+<div class="small">Live test wins</div>
+<div class="value good" id="liveWins">0</div>
+</div>
+<div>
+<div class="small">Live test losses</div>
+<div class="value bad" id="liveLosses">0</div>
+</div>
+</div>
+</div>
+
+<div class="card">
+<h3>Important Notice</h3>
+<p class="note">
+Backtesting measures past outcomes and does not prove future performance.
+A high historical hit rate can happen by chance. Contract payout and risk
+must also be considered. This engine does not place trades or guarantee
+signals or profits.
+</p>
+</div>
+
+<script>
+const URL="wss://api.derivws.com/trading/v1/options/ws/public";
+
+let ws=null;
+let ticks=[];
+let decimals=2;
+let symbol="1HZ100V";
+let timer=null;
+let historyReady=false;
+let pending=false;
+let pendingPrediction=null;
+let liveWins=0;
+let liveLosses=0;
+let req=0;
+let manualClose=false;
+
+const $=id=>document.getElementById(id);
+
+function setStatus(s){
+  $("status").textContent=s;
+}
+
+function getDecimals(pip){
+  const n=Number(pip);
+  if(!n || n<=0) return 2;
+  return Math.max(0,Math.min(8,Math.round(-Math.log10(n))));
+}
+
+function getDigit(price){
+  const s=Number(price).toFixed(decimals);
+  return Number(s[s.length-1]);
+}
+
+function send(data){
+  if(ws && ws.readyState===WebSocket.OPEN){
+    ws.send(JSON.stringify(data));
+  }
+}
+
+function connect(market){
+  symbol=market;
+  historyReady=false;
+  ticks=[];
+  pending=false;
+
+  $("price").textContent="--";
+  $("lastDigit").textContent="--";
+  $("tickCount").textContent="0";
+  $("prediction").textContent="WAIT";
+  $("predictionInfo").textContent="Loading market history.";
+  setStatus("Connecting to Deriv...");
+
+  if(timer) clearTimeout(timer);
+
+  if(ws){
+    manualClose=true;
+    ws.onclose=null;
+    try{ws.close();}catch(e){}
+  }
+
+  manualClose=false;
+  ws=new WebSocket(URL);
+
+  ws.onopen=()=>{
+    setStatus("Connected. Finding market...");
+    send({
+      active_symbols:"full",
+      req_id:++req
+    });
+  };
+
+  ws.onmessage=e=>{
+    let d;
+    try{d=JSON.parse(e.data)}catch(err){return}
+
+    if(d.error){
+      setStatus("Deriv error: "+d.error.message);
+      return;
+    }
+
+    if(d.msg_type==="active_symbols"){
+      const list=(d.active_symbols||[]).filter(m=>
+        m.market==="synthetic_index" &&
+        (m.underlying_symbol_name||"").toLowerCase().includes("volatility")
+      );
+
+      if(!list.length){
+        setStatus("No Volatility markets found.");
+        return;
+      }
+
+      const select=$("market");
+      const previous=symbol;
+      select.innerHTML="";
+
+      list.forEach(m=>{
+        const o=document.createElement("option");
+        o.value=m.underlying_symbol;
+        o.textContent=m.display_name||m.underlying_symbol_name;
+        select.appendChild(o);
+      });
+
+      const chosen=list.find(m=>m.underlying_symbol===previous)||list[0];
+      select.value=chosen.underlying_symbol;
+      symbol=chosen.underlying_symbol;
+      decimals=getDecimals(chosen.pip_size);
+
+      setStatus("Loading "+(chosen.display_name||symbol)+"...");
+
+      send({
+        ticks_history:symbol,
+        count:1000,
+        end:"latest",
+        style:"ticks",
+        req_id:++req
+      });
+    }
+
+    if(d.msg_type==="history" && d.history){
+      ticks=(d.history.prices||[]).map(getDigit).slice(-1000);
+      historyReady=true;
+      $("tickCount").textContent=ticks.length;
+      runAnalysis();
+
+      send({
+        ticks:symbol,
+        subscribe:1,
+        req_id:++req
+      });
+
+      setStatus("Live scanning: "+symbol);
+    }
+
+    if(d.msg_type==="tick" && d.tick){
+      const price=d.tick.quote;
+      const digit=getDigit(price);
+
+      $("price").textContent=Number(price).toFixed(decimals);
+      $("lastDigit").textContent=digit;
+
+      if(!historyReady) return;
+
+      ticks.push(digit);
+      if(ticks.length>1000) ticks.shift();
+
+      $("tickCount").textContent=ticks.length;
+
+      if(pending && pendingPrediction){
+        const won=pendingPrediction.check(digit);
+        if(won) liveWins++;
+        else liveLosses++;
+
+        $("liveWins").textContent=liveWins;
+        $("liveLosses").textContent=liveLosses;
+        $("paperStatus").textContent=
+          (won?"WIN":"LOSS")+" — Next digit: "+digit;
+        $("paperStatus").className=won?"good":"bad";
+
+        pending=false;
+        pendingPrediction=null;
+        $("paper").disabled=false;
+      }
+
+      runAnalysis();
+      setStatus("Live scanning: "+symbol);
+    }
+  };
+
+  ws.onerror=()=>{
+    setStatus("Connection problem. Retrying...");
+  };
+
+  ws.onclose=()=>{
+    if(manualClose) return;
+    setStatus("Disconnected. Reconnecting...");
+    timer=setTimeout(()=>connect(symbol),4000);
+  };
+}
+
+function mostFrequent(arr){
+  const c=Array(10).fill(0);
+  arr.forEach(x=>c[x]++);
+  return c.indexOf(Math.max(...c));
+}
+
+function leastFrequent(arr){
+  const c=Array(10).fill(0);
+  arr.forEach(x=>c[x]++);
+  return c.indexOf(Math.min(...c));
+}
+
+function choosePrediction(arr){
+  const c=Array(10).fill(0);
+  arr.forEach(x=>c[x]++);
+
+  const hot=c.indexOf(Math.max(...c));
+  const even=c[0]+c[2]+c[4]+c[6]+c[8];
+  const odd=arr.length-even;
+  const over=c[6]+c[7]+c[8]+c[9];
+  const under=c[0]+c[1]+c[2]+c[3]+c[4];
+
+  return {
+    digit:hot,
+    parity:even>=odd?"even":"odd",
+    barrier:over>=under?"over":"under"
+  };
+}
+
+function backtest(sample,lookback){
+  const results={
+    match:{w:0,l:0},
+    parity:{w:0,l:0},
+    barrier:{w:0,l:0}
+  };
+
+  for(let i=lookback;i<sample.length;i++){
+    const previous=sample.slice(i-lookback,i);
+    const actual=sample[i];
+    const p=choosePrediction(previous);
+
+    if(actual===p.digit) results.match.w++;
+    else results.match.l++;
+
+    if((actual%2===0)===(p.parity==="even"))
+      results.parity.w++;
+    else results.parity.l++;
+
+    const barrierWon=p.barrier==="over"
+      ?actual>5
+      :actual<5;
+
+    if(barrierWon) results.barrier.w++;
+    else results.barrier.l++;
+  }
+
+  return results;
+}
+
+function rate(r){
+  const n=r.w+r.l;
+  return n?(r.w/n*100):0;
+}
+
+function format(r){
+  const n=r.w+r.l;
+  return n
+    ?rate(r).toFixed(1)+"% ("+r.w+"W/"+r.l+"L)"
+    :"Not enough data";
+}
+
+function runAnalysis(){
+  const windowSize=Number($("window").value);
+  const lookback=Number($("lookback").value);
+  const sample=ticks.slice(-windowSize);
+
+  if(sample.length<lookback+20){
+    $("assessment").textContent="COLLECTING DATA";
+    $("assessmentReason").textContent=
+      "Need at least "+(lookback+20)+" ticks.";
+    return;
+  }
+
+  const c=Array(10).fill(0);
+  sample.forEach(d=>c[d]++);
+
+  $("hot").textContent=mostFrequent(sample);
+  $("cold").textContent=leastFrequent(sample);
+
+  const even=c[0]+c[2]+c[4]+c[6]+c[8];
+  const odd=sample.length-even;
+
+  $("even").textContent=(even/sample.length*100).toFixed(1)+"%";
+  $("odd").textContent=(odd/sample.length*100).toFixed(1)+"%";
+
+  const result=backtest(sample,lookback);
+
+  $("matchResult").textContent=format(result.match);
+  $("parityResult").textContent=format(result.parity);
+  $("barrierResult").textContent=format(result.barrier);
+
+  const wins=result.match.w+result.parity.w+result.barrier.w;
+  const losses=result.match.l+result.parity.l+result.barrier.l;
+  const total=wins+losses;
+
+  $("tested").textContent=total;
+  $("totalWins").textContent=wins;
+  $("totalLosses").textContent=losses;
+  $("accuracy").textContent=
+    total?(wins/total*100).toFixed(1)+"%":"--";
+
+  const best=[
+    {name:"Matches",rate:rate(result.match),r:result.match},
+    {name:"Even/Odd",rate:rate(result.parity),r:result.parity},
+    {name:"Over/Under",rate:rate(result.barrier),r:result.barrier}
+  ].sort((a,b)=>b.rate-a.rate)[0];
+
+  if(best.r.w+best.r.l<30){
+    $("assessment").textContent="WAIT";
+    $("assessmentReason").textContent="Not enough backtest predictions.";
+  }else{
+    $("assessment").textContent="BACKTEST COMPLETE";
+    $("assessmentReason").textContent=
+      "Best historical strategy: "+best.name+
+      " at "+best.rate.toFixed(1)+
+      "%. This is historical performance, not a proven next-tick edge.";
+  }
+
+  const recent=ticks.slice(-lookback);
+  const p=choosePrediction(recent);
+
+  $("prediction").textContent=
+    "Matches "+p.digit+" | "+p.parity.toUpperCase()+
+    " | "+p.barrier.toUpperCase()+" 5";
+
+  $("predictionInfo").textContent=
+    "Predictions generated from the previous "+lookback+
+    " ticks. They are candidates for paper testing, not guaranteed signals.";
+}
+
+$("market").addEventListener("change",e=>{
+  connect(e.target.value);
+});
+
+$("window").addEventListener("change",runAnalysis);
+$("lookback").addEventListener("change",runAnalysis);
+$("analyse").addEventListener("click",runAnalysis);
+
+$("paper").addEventListener("click",()=>{
+  if(pending || !historyReady) return;
+
+  const lookback=Number($("lookback").value);
+  const previous=ticks.slice(-lookback);
+
+  if(previous.length<lookback){
+    $("paperStatus").textContent="Collect more ticks first.";
+    return;
+  }
+
+  const p=choosePrediction(previous);
+
+  pendingPrediction={
+    check:digit=>{
+      return digit===p.digit ||
+        (p.parity==="even" && digit%2===0) ||
+        (p.parity==="odd" && digit%2===1) ||
+        (p.barrier==="over" && digit>5) ||
+        (p.barrier==="under" && digit<5);
+    }
+  };
+
+  pending=true;
+  $("paper").disabled=true;
+  $("paperStatus").textContent=
+    "Testing predictions against the next live tick...";
+});
+
+$("reset").addEventListener("click",()=>{
+  $("tested").textContent="0";
+  $("totalWins").textContent="0";
+  $("totalLosses").textContent="0";
+  $("accuracy").textContent="--";
+  $("matchResult").textContent="--";
+  $("parityResult").textContent="--";
+  $("barrierResult").textContent="--";
+  runAnalysis();
+});
+
+connect("1HZ100V");
+</script>
+</body>
+  </html>
