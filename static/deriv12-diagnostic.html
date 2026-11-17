@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CHACHA AI ENGINE 12 - Connection Diagnostic</title>
+<style>
+body{margin:0;padding:18px;background:#101827;color:#fff;font-family:Arial,sans-serif}
+.card{background:#1b293b;border:1px solid #40546e;border-radius:12px;padding:16px;margin:12px 0}
+h2{color:#38e8b5;text-align:center}.value{font-size:18px;font-weight:bold;color:#ffc65c;overflow-wrap:anywhere}
+p{line-height:1.5}.small{color:#aab7c8;font-size:13px}button{width:100%;padding:14px;border:0;border-radius:8px;background:#087f68;color:#fff;font-size:16px;font-weight:bold}
+</style>
+</head>
+<body>
+<h2>CHACHA AI ENGINE 12</h2>
+<p class="small" style="text-align:center">DERIV CONNECTION DIAGNOSTIC • READ-ONLY • NO TRADING</p>
+<div class="card">
+  <p>Connection status</p><div id="status" class="value">Starting test...</div>
+  <p>Socket state: <b id="state">Not created</b></p>
+  <p>Elapsed: <b id="elapsed">0 seconds</b></p>
+  <p>Server response: <b id="response">Waiting</b></p>
+</div>
+<div class="card">
+  <p class="small">This page tests the public Deriv market-data WebSocket only. It does not request account access or place trades.</p>
+  <button id="retry">TEST CONNECTION AGAIN</button>
+</div>
+<div class="card"><p>Diagnostic detail</p><div id="detail" class="small">No result yet.</div></div>
+<script>
+"use strict";
+const endpoint="wss://api.derivws.com/trading/v1/options/ws/public";
+let socket=null,started=0,clock=null,timeout=null;
+const $=id=>document.getElementById(id);
+function test(){
+  if(clock)clearInterval(clock); if(timeout)clearTimeout(timeout);
+  if(socket){socket.onclose=null;try{socket.close()}catch(e){}}
+  started=Date.now();
+  $("status").textContent="Opening secure connection...";
+  $("state").textContent="Creating";
+  $("elapsed").textContent="0 seconds";
+  $("response").textContent="Waiting";
+  $("detail").textContent="Endpoint: "+endpoint;
+  try{socket=new WebSocket(endpoint)}catch(e){
+    $("status").textContent="Browser could not create WebSocket";
+    $("state").textContent="Not created";
+    $("detail").textContent=e.name+": "+e.message;
+    return;
+  }
+  function update(){const s=["CONNECTING","OPEN","CLOSING","CLOSED"][socket.readyState]||socket.readyState;$("state").textContent=s;$("elapsed").textContent=Math.floor((Date.now()-started)/1000)+" seconds"}
+  clock=setInterval(update,500);update();
+  socket.onopen=()=>{
+    $("status").textContent="CONNECTED — Deriv socket opened";
+    $("response").textContent="Sending market-data test";
+    $("detail").textContent="WebSocket handshake succeeded. Requesting active symbols.";
+    socket.send(JSON.stringify({active_symbols:"brief",req_id:1}));
+    timeout=setTimeout(()=>{if(socket.readyState===1){$("status").textContent="CONNECTED, waiting for server data";$("detail").textContent="Socket is open, but no active_symbols response arrived within 10 seconds."}},10000);
+  };
+  socket.onmessage=e=>{
+    let data;try{data=JSON.parse(e.data)}catch(err){$("detail").textContent="Received non-JSON response.";return}
+    if(data.error){$("response").textContent="Deriv API error";$("detail").textContent=(data.error.code||"Error")+": "+(data.error.message||"Unknown API error");return}
+    if(data.msg_type==="active_symbols"){
+      $("status").textContent="SUCCESS — Deriv data response received";
+      $("response").textContent="Active symbols received: "+((data.active_symbols||[]).length);
+      $("detail").textContent="The browser connected and Deriv returned market data. Engine connection issue is likely in its page logic, not basic network access.";
+      if(timeout)clearTimeout(timeout);
+    }else{$("response").textContent="Received: "+(data.msg_type||"message")}
+  };
+  socket.onerror=()=>{
+    $("status").textContent="WEBSOCKET ERROR";
+    $("response").textContent="No server response";
+    $("detail").textContent="The browser reported a socket error. This often means the network, browser, VPN/content filter, or server handshake blocked the connection. Browser security does not expose the exact cause.";
+  };
+  socket.onclose=e=>{
+    $("state").textContent="CLOSED";
+    $("detail").textContent="Socket closed. Code: "+e.code+". Reason: "+(e.reason||"not supplied")+". Clean close: "+e.wasClean;
+    if($("status").textContent.startsWith("Opening"))$("status").textContent="Connection closed before opening";
+  };
+  timeout=setTimeout(()=>{
+    if(socket.readyState===0){
+      $("status").textContent="TIMEOUT — connection never opened";
+      $("detail").textContent="No WebSocket open event within 15 seconds. This points to a network/browser handshake problem or endpoint reachability issue.";
+    }
+  },15000);
+}
+$("retry").addEventListener("click",test);
+test();
+</script>
+</body>
+</html>
